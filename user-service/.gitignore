@@ -33,5 +33,9 @@ out/
 /nbdist/
 /.nb-gradle/
 
+
+# JWT RSA keys
+src/main/resources/certs/*.pem
+
 ### VS Code ###
 .vscode/
