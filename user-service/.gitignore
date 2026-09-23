@@ -36,6 +36,13 @@ out/
 
 # JWT RSA keys
 src/main/resources/certs/*.pem
+# AES-256 email encryption keys
+src/main/resources/certs/*.key
+
+# Test-only generated keys
+src/test/resources/keys/
+src/test/resources/encryption/
+
 
 ### VS Code ###
 .vscode/

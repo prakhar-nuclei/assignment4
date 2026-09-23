@@ -8,8 +8,29 @@ spring:
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      lock-expiry-seconds: ${REDIS_LOCK_EXPIRY_SECONDS:10}
+      idempotency-expiry-seconds: ${REDIS_IDEMPOTENCY_EXPIRY_SECONDS:86400}
+
+  grpc:
+    server:
+      port: 6565
+      reflection:
+        enabled: true
+
 jwt:
   issuer: user-service
   expiration-seconds: 900
-  private-key-path: ${JWT_PRIVATE_KEY_PATH}
-  public-key-path: ${JWT_PUBLIC_KEY_PATH}
+  private-key-path: ${JWT_PRIVATE_KEY_PATH:src/main/resources/certs/jwt-private.pem}
+  public-key-path: ${JWT_PUBLIC_KEY_PATH:src/main/resources/certs/jwt-public.pem}
+
+email:
+  encryption-key-path: ${EMAIL_ENCRYPTION_KEY_PATH:src/main/resources/certs/email-encryption.key}
+  mac-key-path: ${EMAIL_MAC_KEY_PATH:src/main/resources/certs/email-mac.key}

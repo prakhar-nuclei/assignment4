@@ -1,15 +1,15 @@
 package com.nuclei.userservice.exception;
 
-public class UserAlreadyExistsException extends RuntimeException {
+public class RedisLockAcquisitionException extends RuntimeException {
 
 
     private static final long serialVersionUID = 1L;
 
-    public UserAlreadyExistsException(final String message) {
+    public RedisLockAcquisitionException(final String message) {
         super(message);
     }
 
-    public UserAlreadyExistsException(
+    public RedisLockAcquisitionException(
             final String message,
             final Throwable cause) {
         super(message, cause);

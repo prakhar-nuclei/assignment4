@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<ruleset name="Custom ruleset">
+
+    <description>
+        Production-oriented PMD ruleset for the User Service.
+        The baseline rules are retained while excluding
+        low-value or framework-driven rules.
+    </description>
+
+    <!-- Exclusions for generated files -->
+    <exclude-pattern>.*/proto/.*</exclude-pattern>
+    <exclude-pattern>.*/build/.*</exclude-pattern>
+    <exclude-pattern>.*/test/.*</exclude-pattern>
+
+    <!-- Best Practices -->
+    <rule ref="category/java/bestpractices.xml">
+        <exclude name="GuardLogStatement"/>
+        <exclude name="AvoidReassigningParameters"/>
+        <exclude name="AbstractClassWithoutAbstractMethod"/>
+    </rule>
+
+    <!-- Code Style -->
+    <rule ref="category/java/codestyle.xml">
+        <exclude name="AtLeastOneConstructor"/>
+        <exclude name="OnlyOneReturn"/>
+        <exclude name="MethodArgumentCouldBeFinal"/>
+        <exclude name="LocalVariableCouldBeFinal"/>
+        <exclude name="FinalParameterInAbstractMethod"/>
+        <exclude name="TypeParameterNamingConventions"/>
+        <exclude name="ShortClassName"/>
+        <exclude name="CallSuperInConstructor"/>
+    </rule>
+
+    <!-- Design -->
+    <rule ref="category/java/design.xml">
+        <exclude name="LawOfDemeter"/>
+        <exclude name="ExcessiveParameterList"/>
+        <exclude name="DataClass"/>
+        <exclude name="TooManyFields"/>
+        <exclude name="NcssCount"/>
+        <exclude name="UseUtilityClass"/>
+        <exclude name="UseObjectForClearerAPI"/>
+    </rule>
+
+    <!-- Error Prone -->
+    <rule ref="category/java/errorprone.xml"/>
+
+    <!-- Multithreading -->
+    <rule ref="category/java/multithreading.xml"/>
+
+    <!-- Performance -->
+    <rule ref="category/java/performance.xml"/>
+
+    <!-- Security -->
+    <rule ref="category/java/security.xml"/>
+
+    <!-- Long Variable Names -->
+    <rule ref="category/java/codestyle.xml/LongVariable">
+        <properties>
+            <property name="minimum" value="55"/>
+            <property name="xpath">
+                <value>
+                    <![CDATA[
+                    //VariableDeclaratorId[string-length(@Image) > $minimum]
+                    ]]>
+                </value>
+            </property>
+        </properties>
+    </rule>
+
+    <!-- Short Variable Names -->
+    <rule ref="category/java/codestyle.xml/ShortVariable">
+        <properties>
+            <property name="xpath">
+                <value>
+                    //VariableDeclaratorId[
+                    (string-length(@Image) &lt; 3)
+                    and (not (@Image='id'))
+                    ]
+                    [not(ancestor::ForInit)]
+                    [not((ancestor::FormalParameter) and (ancestor::TryStatement))]
+                </value>
+            </property>
+        </properties>
+    </rule>
+
+</ruleset>

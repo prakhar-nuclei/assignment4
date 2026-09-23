@@ -8,31 +8,51 @@ import com.nuclei.user.proto.UserResponse;
 import com.nuclei.user.proto.UserServiceGrpc;
 import com.nuclei.userservice.dto.UserResponseDto;
 import com.nuclei.userservice.exception.AuthenticationException;
+import com.nuclei.userservice.exception.IdempotencyException;
 import com.nuclei.userservice.exception.InvalidUserRequestException;
+import com.nuclei.userservice.exception.RedisLockAcquisitionException;
 import com.nuclei.userservice.exception.UserAlreadyExistsException;
 import com.nuclei.userservice.exception.UserNotFoundException;
+import com.nuclei.userservice.grpc.interceptor.IdempotencyInterceptor;
+import com.nuclei.userservice.grpc.mapper.AuthenticationResponseMapper;
+import com.nuclei.userservice.grpc.mapper.UserResponseMapper;
+import com.nuclei.userservice.security.GrpcJwtAuthInterceptor;
 import com.nuclei.userservice.service.IAuthenticationService;
 import com.nuclei.userservice.service.IUserService;
 import com.nuclei.userservice.validation.UserRequestValidator;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-import org.springframework.stereotype.Service;
+import org.springframework.grpc.server.service.GrpcService;
+import org.springframework.security.oauth2.jwt.Jwt;
 
-@Service
-public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase{
+@GrpcService(
+        interceptors = {
+
+                IdempotencyInterceptor.class,
+                GrpcJwtAuthInterceptor.class
+
+        }
+)
+public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
 
     private final UserRequestValidator userRequestValidator;
     private final IAuthenticationService authenticationService;
     private final IUserService userService;
+    private final UserResponseMapper userResponseMapper;
+    private final AuthenticationResponseMapper authenticationResponseMapper;
 
     public UserGrpcService(
             final IUserService userService,
             final IAuthenticationService authenticationService,
-            final UserRequestValidator userRequestValidator) {
+            final UserRequestValidator userRequestValidator,
+            final UserResponseMapper userResponseMapper,
+            final AuthenticationResponseMapper authenticationResponseMapper) {
 
         this.userService = userService;
         this.authenticationService = authenticationService;
         this.userRequestValidator = userRequestValidator;
+        this.userResponseMapper = userResponseMapper;
+        this.authenticationResponseMapper = authenticationResponseMapper;
     }
 
 
@@ -46,15 +66,14 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase{
                     request.getEmail(),
                     request.getPassword()
             );
-            final String token = authenticationService.authenticate(
-                    request.getEmail(),
-                    request.getPassword()
-            );
+            final String token =
+                    authenticationService.authenticate(
+                            request.getEmail(),
+                            request.getPassword()
+                    );
 
             final AuthenticateUserResponse response =
-                    AuthenticateUserResponse.newBuilder()
-                            .setAccessToken(token)
-                            .build();
+                    authenticationResponseMapper.toGrpcResponse(token);
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
@@ -89,56 +108,18 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase{
                     request.getPassword()
             );
 
-            final UserResponseDto createdUser = userService.createUser(
-                    request.getName(),
-                    request.getEmail(),
-                    request.getPassword()
-            );
+            final String idempotencyKey =
+                    IdempotencyInterceptor.IDEMPOTENCY_KEY.get();
 
-            final UserResponse response = UserResponse.newBuilder()
-                    .setUserId(createdUser.userId())
-                    .setName(createdUser.name())
-                    .setEmail(createdUser.email())
-                    .build();
+            final UserResponseDto createdUser =
+                    userService.createUser(
+                            request.getName(),
+                            request.getEmail(),
+                            request.getPassword(),
+                            idempotencyKey);
 
-            responseObserver.onNext(response);
-            responseObserver.onCompleted();
-
-        }catch (final InvalidUserRequestException exception) {
-            responseObserver.onError(
-                    Status.INVALID_ARGUMENT
-                            .withDescription(exception.getMessage())
-                            .asRuntimeException()
-            );
-        }
-        catch (final UserAlreadyExistsException exception) {
-
-            responseObserver.onError(
-                    Status.ALREADY_EXISTS
-                            .withDescription(exception.getMessage())
-                            .asRuntimeException()
-            );
-        }
-    }
-
-    @Override
-    public void getUser(
-            final GetUserRequest request,
-            final StreamObserver<UserResponse> responseObserver) {
-        try {
-
-            userRequestValidator.validateGetUser(
-                    request.getUserId()
-            );
-            final UserResponseDto user = userService.getUser(
-                    request.getUserId()
-            );
-
-            final UserResponse response = UserResponse.newBuilder()
-                    .setUserId(user.userId())
-                    .setName(user.name())
-                    .setEmail(user.email())
-                    .build();
+            final UserResponse response =
+                    userResponseMapper.toGrpcResponse(createdUser);
 
             responseObserver.onNext(response);
             responseObserver.onCompleted();
@@ -149,9 +130,73 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase{
                             .withDescription(exception.getMessage())
                             .asRuntimeException()
             );
-        }
-        catch (final UserNotFoundException exception) {
+        } catch (final UserAlreadyExistsException exception) {
 
+            responseObserver.onError(
+                    Status.ALREADY_EXISTS
+                            .withDescription(exception.getMessage())
+                            .asRuntimeException()
+            );
+        } catch (final IdempotencyException exception) {
+            responseObserver.onError(
+                    Status.ABORTED
+                            .withDescription(exception.getMessage())
+                            .asRuntimeException()
+            );
+        } catch (final RedisLockAcquisitionException exception) {
+            responseObserver.onError(
+                    Status.RESOURCE_EXHAUSTED
+                            .withDescription(exception.getMessage())
+                            .asRuntimeException()
+            );
+        }
+    }
+
+    @Override
+    public void getUser(
+            final GetUserRequest request,
+            final StreamObserver<UserResponse> responseObserver) {
+
+        try {
+            userRequestValidator.validateGetUser(
+                    request.getUserId()
+            );
+
+            final Jwt jwt =
+                    GrpcJwtAuthInterceptor.getAuthenticatedJwt();
+
+            if (jwt == null
+                    || !String.valueOf(request.getUserId())
+                    .equals(jwt.getSubject())) {
+
+                responseObserver.onError(
+                        Status.PERMISSION_DENIED
+                                .withDescription(
+                                        "User is not authorized to access this user"
+                                )
+                                .asRuntimeException()
+                );
+                return;
+            }
+
+            final UserResponseDto user =
+                    userService.getUser(
+                            request.getUserId()
+                    );
+
+            final UserResponse response =
+                    userResponseMapper.toGrpcResponse(user);
+
+            responseObserver.onNext(response);
+            responseObserver.onCompleted();
+
+        } catch (final InvalidUserRequestException exception) {
+            responseObserver.onError(
+                    Status.INVALID_ARGUMENT
+                            .withDescription(exception.getMessage())
+                            .asRuntimeException()
+            );
+        } catch (final UserNotFoundException exception) {
             responseObserver.onError(
                     Status.NOT_FOUND
                             .withDescription(exception.getMessage())
