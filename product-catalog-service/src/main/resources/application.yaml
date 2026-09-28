@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/product_catalogue?createDatabaseIfNotExist=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: ${JPA_DDL_AUTO:update}
+    show-sql: ${JPA_SHOW_SQL:false}
+    open-in-view: false
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6380}
+
+  grpc:
+    server:
+      port: ${GRPC_SERVER_PORT:6566}
+
+jwt:
+  public-key-path: ${JWT_PUBLIC_KEY_PATH:src/main/resources/keys/public-key.pem}
+  issuer: ${JWT_ISSUER:user-service}
