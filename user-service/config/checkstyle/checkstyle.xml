@@ -1,0 +1,151 @@
+<?xml version="1.0"?>
+
+<!DOCTYPE module PUBLIC
+        "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN"
+        "https://checkstyle.org/dtds/configuration_1_3.dtd">
+
+<module name="Checker">
+
+    <property name="charset" value="UTF-8"/>
+    <property name="severity" value="error"/>
+    <property name="fileExtensions" value="java"/>
+
+    <module name="BeforeExecutionExclusionFileFilter">
+        <property name="fileNamePattern"
+                  value=".*[/\\]build[/\\]generated[/\\].*"/>
+    </module>
+
+    <!-- File-level checks -->
+    <module name="FileTabCharacter">
+        <property name="eachLine" value="true"/>
+    </module>
+
+    <module name="LineLength">
+        <property name="max" value="120"/>
+        <property name="ignorePattern"
+                  value="^package.*|^import.*|https?://.*"/>
+    </module>
+
+    <module name="TreeWalker">
+
+        <!-- Structure -->
+        <module name="OuterTypeFilename"/>
+        <module name="OneTopLevelClass"/>
+        <module name="OneStatementPerLine"/>
+        <module name="MultipleVariableDeclarations"/>
+
+        <!-- Imports -->
+        <module name="CustomImportOrder">
+            <property name="sortImportsInGroupAlphabetically"
+                      value="true"/>
+            <property name="separateLineBetweenGroups"
+                      value="false"/>
+            <property name="customImportOrderRules"
+                      value="SPECIAL_IMPORTS###STANDARD_JAVA_PACKAGE###THIRD_PARTY_PACKAGE"/>
+            <property name="specialImportsRegExp"
+                      value="^com\.nuclei\."/>
+        </module>
+
+        <!-- Braces -->
+        <module name="NeedBraces"/>
+        <module name="LeftCurly"/>
+        <module name="RightCurly">
+            <property name="option" value="alone"/>
+            <property name="tokens"
+                      value="CLASS_DEF, METHOD_DEF, CTOR_DEF,
+                             LITERAL_FOR, LITERAL_WHILE,
+                             STATIC_INIT, INSTANCE_INIT"/>
+        </module>
+
+        <!-- Whitespace -->
+        <module name="WhitespaceAround">
+            <property name="allowEmptyConstructors" value="true"/>
+            <property name="allowEmptyMethods" value="true"/>
+            <property name="allowEmptyTypes" value="true"/>
+            <property name="allowEmptyLoops" value="true"/>
+        </module>
+
+        <module name="NoWhitespaceBefore">
+            <property name="tokens"
+                      value="COMMA, SEMI, POST_INC, POST_DEC,
+                             DOT, ELLIPSIS, METHOD_REF"/>
+            <property name="allowLineBreaks" value="true"/>
+        </module>
+
+        <module name="MethodParamPad"/>
+        <module name="ParenPad"/>
+        <module name="GenericWhitespace"/>
+
+        <!-- Separators -->
+        <module name="SeparatorWrap">
+            <property name="id" value="SeparatorWrapComma"/>
+            <property name="tokens" value="COMMA"/>
+            <property name="option" value="EOL"/>
+        </module>
+
+        <!-- Modifiers -->
+        <module name="ModifierOrder"/>
+
+        <!-- Empty lines -->
+        <module name="EmptyLineSeparator">
+            <property name="allowNoEmptyLineBetweenFields"
+                      value="true"/>
+        </module>
+
+        <!-- Naming -->
+        <module name="PackageName">
+            <property name="format"
+                      value="^[a-z]+(\.[a-z][a-z0-9]*)*$"/>
+        </module>
+
+        <module name="TypeName"/>
+
+        <module name="MethodName">
+            <property name="format"
+                      value="^[a-z][a-z0-9][a-zA-Z0-9_]*$"/>
+        </module>
+
+        <module name="MemberName">
+            <property name="format"
+                      value="^[a-z][a-z0-9][a-zA-Z0-9]*$"/>
+        </module>
+
+        <module name="ParameterName">
+            <property name="format"
+                      value="^[a-z]([a-z0-9][a-zA-Z0-9]*)?$"/>
+        </module>
+
+        <module name="LocalVariableName">
+            <property name="tokens" value="VARIABLE_DEF"/>
+            <property name="format"
+                      value="^[a-z]([a-z0-9][a-zA-Z0-9]*)?$"/>
+        </module>
+
+        <!-- Annotations -->
+        <module name="AnnotationLocation">
+            <property name="tokens"
+                      value="CLASS_DEF, INTERFACE_DEF, ENUM_DEF,
+                             METHOD_DEF, CTOR_DEF"/>
+        </module>
+
+        <module name="AnnotationLocation">
+            <property name="tokens" value="VARIABLE_DEF"/>
+            <property name="allowSamelineMultipleAnnotations"
+                      value="true"/>
+        </module>
+
+        <!-- Operators -->
+        <module name="OperatorWrap">
+            <property name="option" value="NL"/>
+        </module>
+
+        <!-- Java language rules -->
+        <module name="NoFinalizer"/>
+        <module name="MissingSwitchDefault"/>
+        <module name="FallThrough"/>
+        <module name="UpperEll"/>
+        <module name="ArrayTypeStyle"/>
+
+    </module>
+
+</module>
