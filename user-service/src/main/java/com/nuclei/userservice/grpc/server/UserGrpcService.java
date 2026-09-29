@@ -88,7 +88,6 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
                             .asRuntimeException()
             );
         } catch (final Exception exception) {
-             exception.printStackTrace();
             responseObserver.onError(
                     Status.INTERNAL
                             .withDescription("Internal server error")
@@ -159,7 +158,6 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
                             .asRuntimeException()
             );
         } catch (final Exception exception) {
-            exception.printStackTrace();
             responseObserver.onError(
                     Status.INTERNAL
                             .withDescription("Internal server error")

@@ -25,6 +25,7 @@ spring:
       reflection:
         enabled: true
 
+jwt:
   issuer: user-service
   expiration-seconds: 900
   private-key-path: ${JWT_PRIVATE_KEY_PATH:src/main/resources/certs/jwt-private.pem}
