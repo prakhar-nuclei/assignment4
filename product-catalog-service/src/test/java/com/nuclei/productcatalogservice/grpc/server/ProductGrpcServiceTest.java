@@ -1,20 +1,26 @@
 package com.nuclei.productcatalogservice.grpc.server;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import com.nuclei.product.proto.CreateProductRequest;
+import com.nuclei.product.proto.DeleteProductRequest;
 import com.nuclei.product.proto.GetProductRequest;
 import com.nuclei.product.proto.ProductResponse;
+import com.nuclei.product.proto.UpdateProductRequest;
 import com.nuclei.product.proto.UpdateStockRequest;
 import com.nuclei.productcatalogservice.dto.ProductResponseDto;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
 import com.nuclei.productcatalogservice.exception.ProductConcurrencyException;
 import com.nuclei.productcatalogservice.exception.ProductNotFoundException;
+import com.nuclei.productcatalogservice.mapper.ProductGrpcMapper;
 import com.nuclei.productcatalogservice.service.ProductService;
 import java.math.BigDecimal;
+import com.google.protobuf.Empty;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
@@ -31,13 +37,22 @@ class ProductGrpcServiceTest {
     private ProductService productService;
 
     @Mock
+    private ProductGrpcMapper productGrpcMapper;
+
+    @Mock
     private StreamObserver<ProductResponse> responseObserver;
+
+    @Mock
+    private StreamObserver<Empty> deleteResponseObserver;
 
     private ProductGrpcService productGrpcService;
 
     @BeforeEach
     void setUp() {
-        productGrpcService = new ProductGrpcService(productService);
+        productGrpcService = new ProductGrpcService(
+                productService,
+                productGrpcMapper
+        );
     }
 
     @Test
@@ -50,6 +65,16 @@ class ProductGrpcServiceTest {
         );
 
         when(productService.getProduct(1L)).thenReturn(product);
+
+        ProductResponse productResponse = ProductResponse.newBuilder()
+                .setProductId(1L)
+                .setName("Laptop")
+                .setPrice("50000.00")
+                .setStock(10)
+                .build();
+
+        when(productGrpcMapper.toProductResponse(product))
+                .thenReturn(productResponse);
 
         productGrpcService.getProduct(
                 GetProductRequest.newBuilder()
@@ -73,6 +98,7 @@ class ProductGrpcServiceTest {
 
         verify(productService).getProduct(1L);
         verifyNoMoreInteractions(productService);
+        verify(productGrpcMapper).toProductResponse(product);
     }
 
     @Test
@@ -109,6 +135,300 @@ class ProductGrpcServiceTest {
     }
 
     @Test
+    void createProductShouldReturnMappedResponseWhenProductIsCreated() {
+        ProductResponseDto product = new ProductResponseDto(
+                1L,
+                "Laptop",
+                new BigDecimal("50000.00"),
+                10
+        );
+
+        ProductResponse productResponse = ProductResponse.newBuilder()
+                .setProductId(1L)
+                .setName("Laptop")
+                .setPrice("50000.00")
+                .setStock(10)
+                .build();
+
+        when(productService.createProduct(
+                "Laptop",
+                new BigDecimal("50000.00"),
+                10
+        )).thenReturn(product);
+
+        when(productGrpcMapper.toProductResponse(product))
+                .thenReturn(productResponse);
+
+        productGrpcService.createProduct(
+                CreateProductRequest.newBuilder()
+                        .setName("Laptop")
+                        .setPrice("50000.00")
+                        .setStock(10)
+                        .build(),
+                responseObserver
+        );
+
+        var responseCaptor =
+                org.mockito.ArgumentCaptor.forClass(ProductResponse.class);
+
+        verify(responseObserver).onNext(responseCaptor.capture());
+        verify(responseObserver).onCompleted();
+
+        ProductResponse response = responseCaptor.getValue();
+
+        assertEquals(1L, response.getProductId());
+        assertEquals("Laptop", response.getName());
+        assertEquals("50000.00", response.getPrice());
+        assertEquals(10, response.getStock());
+
+        verify(productService).createProduct(
+                "Laptop",
+                new BigDecimal("50000.00"),
+                10
+        );
+        verify(productGrpcMapper).toProductResponse(product);
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void createProductShouldReturnInvalidArgumentWhenPriceIsInvalid() {
+        productGrpcService.createProduct(
+                CreateProductRequest.newBuilder()
+                        .setName("Laptop")
+                        .setPrice("invalid-price")
+                        .setStock(10)
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void updateProductShouldReturnMappedResponseWhenProductIsUpdated() {
+        ProductResponseDto product = new ProductResponseDto(
+                1L,
+                "Gaming Laptop",
+                new BigDecimal("75000.00"),
+                20
+        );
+
+        ProductResponse productResponse = ProductResponse.newBuilder()
+                .setProductId(1L)
+                .setName("Gaming Laptop")
+                .setPrice("75000.00")
+                .setStock(20)
+                .build();
+
+        when(productService.updateProduct(
+                1L,
+                "Gaming Laptop",
+                new BigDecimal("75000.00"),
+                20
+        )).thenReturn(product);
+
+        when(productGrpcMapper.toProductResponse(product))
+                .thenReturn(productResponse);
+
+        productGrpcService.updateProduct(
+                UpdateProductRequest.newBuilder()
+                        .setProductId(1L)
+                        .setName("Gaming Laptop")
+                        .setPrice("75000.00")
+                        .setStock(20)
+                        .build(),
+                responseObserver
+        );
+
+        var responseCaptor =
+                org.mockito.ArgumentCaptor.forClass(ProductResponse.class);
+
+        verify(responseObserver).onNext(responseCaptor.capture());
+        verify(responseObserver).onCompleted();
+
+        ProductResponse response = responseCaptor.getValue();
+
+        assertEquals(1L, response.getProductId());
+        assertEquals("Gaming Laptop", response.getName());
+        assertEquals("75000.00", response.getPrice());
+        assertEquals(20, response.getStock());
+
+        verify(productService).updateProduct(
+                1L,
+                "Gaming Laptop",
+                new BigDecimal("75000.00"),
+                20
+        );
+        verify(productGrpcMapper).toProductResponse(product);
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void updateProductShouldReturnInvalidArgumentWhenProductIdIsInvalid() {
+        productGrpcService.updateProduct(
+                UpdateProductRequest.newBuilder()
+                        .setProductId(0L)
+                        .setName("Gaming Laptop")
+                        .setPrice("75000.00")
+                        .setStock(20)
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void updateProductShouldReturnInvalidArgumentWhenPriceIsInvalid() {
+        productGrpcService.updateProduct(
+                UpdateProductRequest.newBuilder()
+                        .setProductId(1L)
+                        .setName("Gaming Laptop")
+                        .setPrice("invalid-price")
+                        .setStock(20)
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void updateProductShouldReturnNotFoundWhenProductDoesNotExist() {
+        when(productService.updateProduct(
+                1L,
+                "Gaming Laptop",
+                new BigDecimal("75000.00"),
+                20
+        )).thenThrow(new ProductNotFoundException(1L));
+
+        productGrpcService.updateProduct(
+                UpdateProductRequest.newBuilder()
+                        .setProductId(1L)
+                        .setName("Gaming Laptop")
+                        .setPrice("75000.00")
+                        .setStock(20)
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.NOT_FOUND);
+
+        verify(productService).updateProduct(
+                1L,
+                "Gaming Laptop",
+                new BigDecimal("75000.00"),
+                20
+        );
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void updateProductShouldReturnAbortedWhenConcurrencyConflictOccurs() {
+        when(productService.updateProduct(
+                1L,
+                "Gaming Laptop",
+                new BigDecimal("75000.00"),
+                20
+        )).thenThrow(new ProductConcurrencyException(1L));
+
+        productGrpcService.updateProduct(
+                UpdateProductRequest.newBuilder()
+                        .setProductId(1L)
+                        .setName("Gaming Laptop")
+                        .setPrice("75000.00")
+                        .setStock(20)
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.ABORTED);
+
+        verify(productService).updateProduct(
+                1L,
+                "Gaming Laptop",
+                new BigDecimal("75000.00"),
+                20
+        );
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void deleteProductShouldReturnEmptyWhenProductIsDeleted() {
+        productGrpcService.deleteProduct(
+                DeleteProductRequest.newBuilder()
+                        .setProductId(1L)
+                        .build(),
+                deleteResponseObserver
+        );
+
+        verify(productService).deleteProduct(1L);
+        verify(deleteResponseObserver).onNext(Empty.getDefaultInstance());
+        verify(deleteResponseObserver).onCompleted();
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void deleteProductShouldReturnInvalidArgumentWhenProductIdIsInvalid() {
+        productGrpcService.deleteProduct(
+                DeleteProductRequest.newBuilder()
+                        .setProductId(0L)
+                        .build(),
+                deleteResponseObserver
+        );
+
+        verifyEmptyErrorStatus(Status.Code.INVALID_ARGUMENT);
+
+        verify(productService, never()).deleteProduct(0L);
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void deleteProductShouldReturnNotFoundWhenProductDoesNotExist() {
+        doThrow(new ProductNotFoundException(1L))
+                .when(productService)
+                .deleteProduct(1L);
+
+        productGrpcService.deleteProduct(
+                DeleteProductRequest.newBuilder()
+                        .setProductId(1L)
+                        .build(),
+                deleteResponseObserver
+        );
+
+        verifyEmptyErrorStatus(Status.Code.NOT_FOUND);
+
+        verify(productService).deleteProduct(1L);
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void deleteProductShouldReturnAbortedWhenConcurrencyConflictOccurs() {
+        doThrow(new ProductConcurrencyException(1L))
+                .when(productService)
+                .deleteProduct(1L);;
+
+        productGrpcService.deleteProduct(
+                DeleteProductRequest.newBuilder()
+                        .setProductId(1L)
+                        .build(),
+                deleteResponseObserver
+        );
+
+        verifyEmptyErrorStatus(Status.Code.ABORTED);
+
+        verify(productService).deleteProduct(1L);
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
     void updateStockShouldReturnMappedResponseWhenStockIsUpdated() {
         ProductResponseDto product = new ProductResponseDto(
                 1L,
@@ -119,6 +439,16 @@ class ProductGrpcServiceTest {
 
         when(productService.updateStock(1L, 5))
                 .thenReturn(product);
+
+        ProductResponse productResponse = ProductResponse.newBuilder()
+                .setProductId(1L)
+                .setName("Laptop")
+                .setPrice("50000.00")
+                .setStock(15)
+                .build();
+
+        when(productGrpcMapper.toProductResponse(product))
+                .thenReturn(productResponse);
 
         productGrpcService.updateStock(
                 UpdateStockRequest.newBuilder()
@@ -143,6 +473,7 @@ class ProductGrpcServiceTest {
 
         verify(productService).updateStock(1L, 5);
         verifyNoMoreInteractions(productService);
+        verify(productGrpcMapper).toProductResponse(product);
     }
 
     @Test
@@ -248,6 +579,16 @@ class ProductGrpcServiceTest {
 
         when(productService.getProduct(1L)).thenReturn(product);
 
+        ProductResponse productResponse = ProductResponse.newBuilder()
+                .setProductId(1L)
+                .setName("Product")
+                .setPrice("123.40")
+                .setStock(5)
+                .build();
+
+        when(productGrpcMapper.toProductResponse(product))
+                .thenReturn(productResponse);
+
         productGrpcService.getProduct(
                 GetProductRequest.newBuilder()
                         .setProductId(1L)
@@ -264,6 +605,7 @@ class ProductGrpcServiceTest {
 
         verify(productService).getProduct(1L);
         verifyNoMoreInteractions(productService);
+        verify(productGrpcMapper).toProductResponse(product);
     }
 
     @SuppressWarnings("unchecked")
@@ -283,5 +625,24 @@ class ProductGrpcServiceTest {
                 org.mockito.ArgumentMatchers.any(ProductResponse.class)
         );
         verify(responseObserver, never()).onCompleted();
+    }
+
+    @SuppressWarnings("unchecked")
+    private void verifyEmptyErrorStatus(Status.Code expectedCode) {
+        var errorCaptor =
+                org.mockito.ArgumentCaptor.forClass(
+                        StatusRuntimeException.class);
+
+        verify(deleteResponseObserver).onError(errorCaptor.capture());
+
+        assertEquals(
+                expectedCode,
+                errorCaptor.getValue().getStatus().getCode()
+        );
+
+        verify(deleteResponseObserver, never())
+                .onNext(Empty.getDefaultInstance());
+
+        verify(deleteResponseObserver, never()).onCompleted();
     }
 }

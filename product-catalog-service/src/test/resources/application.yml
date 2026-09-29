@@ -19,7 +19,7 @@ spring:
 
 grpc:
   server:
-    port: 0
+    port: 6566
 
 jwt:
   public-key-path: src/test/resources/keys/public-key.pem
