@@ -6,13 +6,9 @@ import com.nuclei.user.proto.CreateUserRequest;
 import com.nuclei.user.proto.GetUserRequest;
 import com.nuclei.user.proto.UserResponse;
 import com.nuclei.user.proto.UserServiceGrpc;
+import com.nuclei.userservice.dto.UserCreateRequestDto;
 import com.nuclei.userservice.dto.UserResponseDto;
-import com.nuclei.userservice.exception.AuthenticationException;
-import com.nuclei.userservice.exception.IdempotencyException;
-import com.nuclei.userservice.exception.InvalidUserRequestException;
-import com.nuclei.userservice.exception.RedisLockAcquisitionException;
-import com.nuclei.userservice.exception.UserAlreadyExistsException;
-import com.nuclei.userservice.exception.UserNotFoundException;
+import com.nuclei.userservice.exception.*;
 import com.nuclei.userservice.grpc.interceptor.IdempotencyInterceptor;
 import com.nuclei.userservice.grpc.mapper.AuthenticationResponseMapper;
 import com.nuclei.userservice.grpc.mapper.UserResponseMapper;
@@ -56,6 +52,7 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
     }
 
 
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     @Override
     public void authenticateUser(
             final AuthenticateUserRequest request,
@@ -84,17 +81,23 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
                             .withDescription(exception.getMessage())
                             .asRuntimeException()
             );
-        }
-
-        catch (final AuthenticationException exception) {
+        } catch (final AuthenticationException exception) {
             responseObserver.onError(
                     Status.UNAUTHENTICATED
                             .withDescription(exception.getMessage())
                             .asRuntimeException()
             );
+        } catch (final Exception exception) {
+             exception.printStackTrace();
+            responseObserver.onError(
+                    Status.INTERNAL
+                            .withDescription("Internal server error")
+                            .asRuntimeException()
+            );
         }
     }
 
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     @Override
     public void createUser(
             final CreateUserRequest request,
@@ -111,12 +114,18 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
             final String idempotencyKey =
                     IdempotencyInterceptor.IDEMPOTENCY_KEY.get();
 
-            final UserResponseDto createdUser =
-                    userService.createUser(
+            final UserCreateRequestDto userRequest =
+                    new UserCreateRequestDto(
                             request.getName(),
                             request.getEmail(),
-                            request.getPassword(),
-                            idempotencyKey);
+                            request.getPassword()
+                    );
+
+            final UserResponseDto createdUser =
+                    userService.createUser(
+                            userRequest,
+                            idempotencyKey
+                    );
 
             final UserResponse response =
                     userResponseMapper.toGrpcResponse(createdUser);
@@ -130,14 +139,14 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
                             .withDescription(exception.getMessage())
                             .asRuntimeException()
             );
-        } catch (final UserAlreadyExistsException exception) {
-
-            responseObserver.onError(
-                    Status.ALREADY_EXISTS
-                            .withDescription(exception.getMessage())
-                            .asRuntimeException()
-            );
-        } catch (final IdempotencyException exception) {
+        } catch (final UserAlreadyExistsException
+        | IdempotencyKeyConflictException exception) {
+        responseObserver.onError(
+                Status.ALREADY_EXISTS
+                        .withDescription(exception.getMessage())
+                        .asRuntimeException()
+        );
+    } catch (final IdempotencyException exception) {
             responseObserver.onError(
                     Status.ABORTED
                             .withDescription(exception.getMessage())
@@ -147,6 +156,13 @@ public class UserGrpcService extends UserServiceGrpc.UserServiceImplBase {
             responseObserver.onError(
                     Status.RESOURCE_EXHAUSTED
                             .withDescription(exception.getMessage())
+                            .asRuntimeException()
+            );
+        } catch (final Exception exception) {
+            exception.printStackTrace();
+            responseObserver.onError(
+                    Status.INTERNAL
+                            .withDescription("Internal server error")
                             .asRuntimeException()
             );
         }

@@ -7,14 +7,12 @@ import io.grpc.ServerCall;
 import io.grpc.ServerCallHandler;
 import io.grpc.ServerInterceptor;
 import io.grpc.Status;
-import org.springframework.grpc.server.GlobalServerInterceptor;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.stereotype.Component;
 
 @Component
-@GlobalServerInterceptor
 public class GrpcJwtAuthInterceptor implements ServerInterceptor {
 
     private static final Metadata.Key<String> AUTHORIZATION_METADATA_KEY =

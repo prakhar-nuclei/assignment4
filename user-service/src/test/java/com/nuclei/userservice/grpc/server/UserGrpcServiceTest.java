@@ -1,20 +1,25 @@
 package com.nuclei.userservice.grpc.server;
 
 import com.nuclei.user.proto.*;
+import com.nuclei.userservice.dto.UserCreateRequestDto;
 import com.nuclei.userservice.dto.UserResponseDto;
 import com.nuclei.userservice.exception.*;
+import com.nuclei.userservice.grpc.interceptor.IdempotencyInterceptor;
 import com.nuclei.userservice.grpc.mapper.AuthenticationResponseMapper;
 import com.nuclei.userservice.grpc.mapper.UserResponseMapper;
 import com.nuclei.userservice.security.GrpcJwtAuthInterceptor;
 import com.nuclei.userservice.service.IAuthenticationService;
 import com.nuclei.userservice.service.IUserService;
 import com.nuclei.userservice.validation.UserRequestValidator;
+import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import static org.mockito.Mockito.*;
@@ -62,6 +67,8 @@ class UserGrpcServiceTest {
 
     @Test
     void createUser_shouldReturnMappedUserResponse() {
+        final String idempotencyKey = "test-idempotency-key";
+
         final CreateUserRequest request =
                 CreateUserRequest.newBuilder()
                         .setName("Prakhar")
@@ -83,19 +90,25 @@ class UserGrpcServiceTest {
                         .setEmail("prakhar@example.com")
                         .build();
 
+        final Context context =
+                Context.current().withValue(
+                        IdempotencyInterceptor.IDEMPOTENCY_KEY,
+                        idempotencyKey
+                );
+
         when(userService.createUser(
-                "Prakhar",
-                "prakhar@example.com",
-                "password123",
-                null
+                any(UserCreateRequestDto.class),
+                eq(idempotencyKey)
         )).thenReturn(userResponseDto);
 
         when(userResponseMapper.toGrpcResponse(userResponseDto))
                 .thenReturn(grpcResponse);
 
-        userGrpcService.createUser(
-                request,
-                responseObserver
+        context.run(() ->
+                userGrpcService.createUser(
+                        request,
+                        responseObserver
+                )
         );
 
         verify(userRequestValidator).validateCreateUser(
@@ -105,10 +118,14 @@ class UserGrpcServiceTest {
         );
 
         verify(userService).createUser(
-                "Prakhar",
-                "prakhar@example.com",
-                "password123",
-                null
+                argThat(userRequest ->
+                        "Prakhar".equals(userRequest.name())
+                                && "prakhar@example.com"
+                                .equals(userRequest.email())
+                                && "password123"
+                                .equals(userRequest.password())
+                ),
+                eq(idempotencyKey)
         );
 
         verify(userResponseMapper).toGrpcResponse(
@@ -141,8 +158,11 @@ class UserGrpcServiceTest {
                         .setPassword("")
                         .build();
 
-        doThrow(new InvalidUserRequestException("Invalid user request"))
-                .when(userRequestValidator)
+        doThrow(
+                new InvalidUserRequestException(
+                        "Invalid user request"
+                )
+        ).when(userRequestValidator)
                 .validateCreateUser(
                         "",
                         "invalid-email",
@@ -158,8 +178,10 @@ class UserGrpcServiceTest {
                 argThat(throwable ->
                         Status.fromThrowable(throwable).getCode()
                                 == Status.Code.INVALID_ARGUMENT
-                                && "Invalid user request"
-                                .equals(Status.fromThrowable(throwable).getDescription())
+                                && "Invalid user request".equals(
+                                Status.fromThrowable(throwable)
+                                        .getDescription()
+                        )
                 )
         );
 
@@ -169,6 +191,8 @@ class UserGrpcServiceTest {
 
     @Test
     void createUser_shouldReturnAlreadyExistsForDuplicateUser() {
+        final String idempotencyKey = "test-idempotency-key";
+
         final CreateUserRequest request =
                 CreateUserRequest.newBuilder()
                         .setName("Prakhar")
@@ -176,29 +200,34 @@ class UserGrpcServiceTest {
                         .setPassword("password123")
                         .build();
 
+        final Context context =
+                Context.current().withValue(
+                        IdempotencyInterceptor.IDEMPOTENCY_KEY,
+                        idempotencyKey
+                );
+
         when(userService.createUser(
-                "Prakhar",
-                "prakhar@example.com",
-                "password123",
-                null
+                any(UserCreateRequestDto.class),
+                eq(idempotencyKey)
         )).thenThrow(
                 new UserAlreadyExistsException("User already exists")
         );
 
-        userGrpcService.createUser(
-                request,
-                responseObserver
+        context.run(() ->
+                userGrpcService.createUser(
+                        request,
+                        responseObserver
+                )
         );
 
         verify(responseObserver).onError(
                 argThat(throwable ->
                         Status.fromThrowable(throwable).getCode()
                                 == Status.Code.ALREADY_EXISTS
-                                && "User already exists"
-                                .equals(
-                                        Status.fromThrowable(throwable)
-                                                .getDescription()
-                                )
+                                && "User already exists".equals(
+                                Status.fromThrowable(throwable)
+                                        .getDescription()
+                        )
                 )
         );
 
@@ -206,6 +235,17 @@ class UserGrpcServiceTest {
                 "Prakhar",
                 "prakhar@example.com",
                 "password123"
+        );
+
+        verify(userService).createUser(
+                argThat(userRequest ->
+                        "Prakhar".equals(userRequest.name())
+                                && "prakhar@example.com"
+                                .equals(userRequest.email())
+                                && "password123"
+                                .equals(userRequest.password())
+                ),
+                eq(idempotencyKey)
         );
 
         verifyNoInteractions(userResponseMapper);
@@ -213,6 +253,8 @@ class UserGrpcServiceTest {
 
     @Test
     void createUser_shouldReturnAbortedForIdempotencyFailure() {
+        final String idempotencyKey = "test-idempotency-key";
+
         final CreateUserRequest request =
                 CreateUserRequest.newBuilder()
                         .setName("Prakhar")
@@ -220,29 +262,36 @@ class UserGrpcServiceTest {
                         .setPassword("password123")
                         .build();
 
+        final Context context =
+                Context.current().withValue(
+                        IdempotencyInterceptor.IDEMPOTENCY_KEY,
+                        idempotencyKey
+                );
+
         when(userService.createUser(
-                "Prakhar",
-                "prakhar@example.com",
-                "password123",
-                null
+                any(UserCreateRequestDto.class),
+                eq(idempotencyKey)
         )).thenThrow(
-                new IdempotencyException("Idempotency operation failed")
+                new IdempotencyException(
+                        "Idempotency operation failed"
+                )
         );
 
-        userGrpcService.createUser(
-                request,
-                responseObserver
+        context.run(() ->
+                userGrpcService.createUser(
+                        request,
+                        responseObserver
+                )
         );
 
         verify(responseObserver).onError(
                 argThat(throwable ->
                         Status.fromThrowable(throwable).getCode()
                                 == Status.Code.ABORTED
-                                && "Idempotency operation failed"
-                                .equals(
-                                        Status.fromThrowable(throwable)
-                                                .getDescription()
-                                )
+                                && "Idempotency operation failed".equals(
+                                Status.fromThrowable(throwable)
+                                        .getDescription()
+                        )
                 )
         );
 
@@ -250,6 +299,17 @@ class UserGrpcServiceTest {
                 "Prakhar",
                 "prakhar@example.com",
                 "password123"
+        );
+
+        verify(userService).createUser(
+                argThat(userRequest ->
+                        "Prakhar".equals(userRequest.name())
+                                && "prakhar@example.com"
+                                .equals(userRequest.email())
+                                && "password123"
+                                .equals(userRequest.password())
+                ),
+                eq(idempotencyKey)
         );
 
         verifyNoInteractions(userResponseMapper);
@@ -257,6 +317,8 @@ class UserGrpcServiceTest {
 
     @Test
     void createUser_shouldReturnResourceExhaustedForRedisLockFailure() {
+        final String idempotencyKey = "test-idempotency-key";
+
         final CreateUserRequest request =
                 CreateUserRequest.newBuilder()
                         .setName("Prakhar")
@@ -264,31 +326,36 @@ class UserGrpcServiceTest {
                         .setPassword("password123")
                         .build();
 
+        final Context context =
+                Context.current().withValue(
+                        IdempotencyInterceptor.IDEMPOTENCY_KEY,
+                        idempotencyKey
+                );
+
         when(userService.createUser(
-                "Prakhar",
-                "prakhar@example.com",
-                "password123",
-                null
+                any(UserCreateRequestDto.class),
+                eq(idempotencyKey)
         )).thenThrow(
                 new RedisLockAcquisitionException(
                         "Failed to acquire Redis lock"
                 )
         );
 
-        userGrpcService.createUser(
-                request,
-                responseObserver
+        context.run(() ->
+                userGrpcService.createUser(
+                        request,
+                        responseObserver
+                )
         );
 
         verify(responseObserver).onError(
                 argThat(throwable ->
                         Status.fromThrowable(throwable).getCode()
                                 == Status.Code.RESOURCE_EXHAUSTED
-                                && "Failed to acquire Redis lock"
-                                .equals(
-                                        Status.fromThrowable(throwable)
-                                                .getDescription()
-                                )
+                                && "Failed to acquire Redis lock".equals(
+                                Status.fromThrowable(throwable)
+                                        .getDescription()
+                        )
                 )
         );
 
@@ -296,6 +363,18 @@ class UserGrpcServiceTest {
                 "Prakhar",
                 "prakhar@example.com",
                 "password123"
+        );
+
+        verify(userService).createUser(
+                argThat(userRequest ->
+                        "Prakhar".equals(userRequest.name())
+                                && "prakhar@example.com"
+                                .equals(userRequest.email())
+                                && "password123".equals(
+                                userRequest.password()
+                        )
+                ),
+                eq(idempotencyKey)
         );
 
         verifyNoInteractions(userResponseMapper);
@@ -354,8 +433,11 @@ class UserGrpcServiceTest {
                         .setPassword("")
                         .build();
 
-        doThrow(new InvalidUserRequestException("Invalid authentication request"))
-                .when(userRequestValidator)
+        doThrow(
+                new InvalidUserRequestException(
+                        "Invalid authentication request"
+                )
+        ).when(userRequestValidator)
                 .validateAuthenticateUser(
                         "invalid-email",
                         ""
@@ -413,6 +495,11 @@ class UserGrpcServiceTest {
         );
 
         verify(userRequestValidator).validateAuthenticateUser(
+                "prakhar@example.com",
+                "wrongpassword"
+        );
+
+        verify(authenticationService).authenticate(
                 "prakhar@example.com",
                 "wrongpassword"
         );
@@ -537,7 +624,9 @@ class UserGrpcServiceTest {
 
         when(userService.getUser(1L))
                 .thenThrow(
-                        new UserNotFoundException("User not found")
+                        new UserNotFoundException(
+                                "User not found"
+                        )
                 );
 
         try (MockedStatic<GrpcJwtAuthInterceptor> mockedInterceptor =

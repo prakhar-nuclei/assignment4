@@ -2,9 +2,11 @@ package com.nuclei.userservice.service;
 
 public interface IIdempotencyService {
 
-    String getResult(String idempotencyKey);
+    String getResult(String idempotencyKey,
+                     String requestHash);
 
-    boolean saveResult(
+    String saveResult(
             String idempotencyKey,
+            String requestHash,
             String result);
 }

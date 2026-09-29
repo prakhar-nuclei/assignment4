@@ -1,17 +1,20 @@
 package com.nuclei.userservice.service.impl;
 
+import com.nuclei.userservice.dto.UserCreateRequestDto;
 import com.nuclei.userservice.dto.UserResponseDto;
 import com.nuclei.userservice.entity.User;
-import com.nuclei.userservice.exception.IdempotencyException;
 import com.nuclei.userservice.exception.UserAlreadyExistsException;
 import com.nuclei.userservice.exception.UserNotFoundException;
+import com.nuclei.userservice.mapper.UserMapper;
 import com.nuclei.userservice.repo.UserRepository;
 import com.nuclei.userservice.service.IIdempotencyService;
 import com.nuclei.userservice.service.IUserService;
 import com.nuclei.userservice.service.RedisEmailLockService;
 import com.nuclei.userservice.util.EmailEncryptionUtil;
 import com.nuclei.userservice.util.EmailUtil;
-import com.nuclei.userservice.util.PasswordUtil;
+import com.nuclei.userservice.util.RequestHashUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -19,49 +22,64 @@ import org.springframework.stereotype.Service;
 public class UserServiceImpl implements IUserService {
 
     private final UserRepository userRepository;
-    private final PasswordUtil passwordUtil;
+    private final UserMapper userMapper;
     private final EmailUtil emailUtil;
     private final EmailEncryptionUtil emailEncryptionUtil;
+    private final RequestHashUtil requestHashUtil;
     private final IIdempotencyService idempotencyService;
     private final RedisEmailLockService redisEmailLockService;
 
+    private static final Logger LOG =
+            LoggerFactory.getLogger(UserServiceImpl.class);
+
     public UserServiceImpl(
             final UserRepository userRepository,
-            final PasswordUtil passwordUtil,
+            final UserMapper userMapper,
             final EmailUtil emailUtil,
             final EmailEncryptionUtil emailEncryptionUtil,
+            final RequestHashUtil requestHashUtil,
             final IIdempotencyService idempotencyService,
             final RedisEmailLockService redisEmailLockService) {
 
         this.userRepository = userRepository;
-        this.passwordUtil = passwordUtil;
+        this.userMapper = userMapper;
         this.emailUtil = emailUtil;
         this.emailEncryptionUtil = emailEncryptionUtil;
+        this.requestHashUtil = requestHashUtil;
         this.idempotencyService = idempotencyService;
         this.redisEmailLockService = redisEmailLockService;
     }
 
     @Override
     public UserResponseDto createUser(
-            final String name,
-            final String email,
-            final String password,
+            final UserCreateRequestDto request,
             final String idempotencyKey) {
 
+        final String normalizedEmail =
+                emailUtil.normalize(request.email());
+
+        final String requestHash =
+                requestHashUtil.generateHash(
+                        request.name(),
+                        normalizedEmail
+                );
+
         final UserResponseDto existingUser =
-                findUserByIdempotencyKey(idempotencyKey);
+                findUserByIdempotencyKey(
+                        idempotencyKey,
+                        requestHash
+                );
 
         if (existingUser != null) {
             return existingUser;
         }
 
-        final String normalizedEmail = emailUtil.normalize(email);
         final String lockValue =
                 redisEmailLockService.acquireLock(normalizedEmail);
 
         try {
             final UserResponseDto existingUserAfterLock =
-                    findUserByIdempotencyKey(idempotencyKey);
+                    findUserByIdempotencyKey(idempotencyKey,requestHash);
 
             if (existingUserAfterLock != null) {
                 return existingUserAfterLock;
@@ -70,18 +88,27 @@ public class UserServiceImpl implements IUserService {
             final String encryptedEmail =
                     emailEncryptionUtil.encrypt(normalizedEmail);
 
-            validateUserDoesNotExist(encryptedEmail, normalizedEmail);
+            final UserResponseDto existingUserByEmail =
+                    findExistingUserByEmail(
+                            encryptedEmail,
+                            normalizedEmail
+                    );
 
-            final User user = buildUser(
-                    name,
+            if (existingUserByEmail != null) {
+                return existingUserByEmail;
+            }
+
+            final User user = userMapper.toEntity(
+                   request.name(),
                     normalizedEmail,
-                    password
+                    request.password()
             );
 
             final User savedUser = saveUser(user, normalizedEmail);
 
             return saveIdempotencyResultAndReturnUser(
                     idempotencyKey,
+                    requestHash,
                     savedUser
             );
 
@@ -94,10 +121,14 @@ public class UserServiceImpl implements IUserService {
     }
 
     private UserResponseDto findUserByIdempotencyKey(
-            final String idempotencyKey) {
+            final String idempotencyKey,
+            final String requestHash) {
 
         final String existingUserId =
-                idempotencyService.getResult(idempotencyKey);
+                idempotencyService.getResult(
+                        idempotencyKey,
+                        requestHash
+                );
 
         if (existingUserId == null) {
             return null;
@@ -106,31 +137,19 @@ public class UserServiceImpl implements IUserService {
         return getUser(Long.valueOf(existingUserId));
     }
 
-    private void validateUserDoesNotExist(
+    private UserResponseDto findExistingUserByEmail(
             final String encryptedEmail,
             final String normalizedEmail) {
 
-        if (userRepository.existsByEmail(encryptedEmail)) {
-            throw new UserAlreadyExistsException(
-                    "User already exists with email: " + normalizedEmail
-            );
-        }
-    }
-
-    private User buildUser(
-            final String name,
-            final String normalizedEmail,
-            final String password) {
-
-        final String hashedPassword =
-                passwordUtil.hash(password);
-
-        final User user = new User();
-        user.setName(name);
-        user.setEmail(normalizedEmail);
-        user.setPasswordHash(hashedPassword);
-
-        return user;
+        return userRepository.findByEmail(encryptedEmail)
+                .map(user -> {
+                    LOG.warn(
+                            "User already exists with email: {}",
+                            normalizedEmail
+                    );
+                    return userMapper.toResponseDto(user);
+                })
+                .orElse(null);
     }
 
     private User saveUser(
@@ -149,36 +168,17 @@ public class UserServiceImpl implements IUserService {
 
     private UserResponseDto saveIdempotencyResultAndReturnUser(
             final String idempotencyKey,
+            final String requestHash,
             final User savedUser) {
 
-        final boolean resultSaved =
+        final String idempotencyResult =
                 idempotencyService.saveResult(
                         idempotencyKey,
+                        requestHash,
                         savedUser.getId().toString()
                 );
 
-        if (resultSaved) {
-            return toResponseDto(savedUser);
-        }
-
-        final String existingUserId =
-                idempotencyService.getResult(idempotencyKey);
-
-        if (existingUserId == null) {
-            throw new IdempotencyException(
-                    "Failed to save idempotency result"
-            );
-        }
-
-        return getUser(Long.valueOf(existingUserId));
-    }
-
-    private UserResponseDto toResponseDto(final User user) {
-        return new UserResponseDto(
-                user.getId(),
-                user.getName(),
-                user.getEmail()
-        );
+        return getUser(Long.valueOf(idempotencyResult));
     }
 
     @Override
@@ -188,6 +188,6 @@ public class UserServiceImpl implements IUserService {
                 .orElseThrow(() ->
                         new UserNotFoundException("User not found"));
 
-        return toResponseDto(user);
+        return userMapper.toResponseDto(user);
     }
 }

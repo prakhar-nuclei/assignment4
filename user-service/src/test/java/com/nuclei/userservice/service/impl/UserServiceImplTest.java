@@ -1,19 +1,26 @@
 package com.nuclei.userservice.service.impl;
 
+import com.nuclei.userservice.dto.UserCreateRequestDto;
 import com.nuclei.userservice.dto.UserResponseDto;
 import com.nuclei.userservice.entity.User;
 import com.nuclei.userservice.exception.RedisLockAcquisitionException;
 import com.nuclei.userservice.exception.UserAlreadyExistsException;
 import com.nuclei.userservice.exception.UserNotFoundException;
+import com.nuclei.userservice.mapper.UserMapper;
 import com.nuclei.userservice.repo.UserRepository;
 import com.nuclei.userservice.service.IIdempotencyService;
 import com.nuclei.userservice.service.RedisEmailLockService;
 import com.nuclei.userservice.util.EmailEncryptionUtil;
 import com.nuclei.userservice.util.EmailUtil;
-import com.nuclei.userservice.util.PasswordUtil;
-import static org.junit.jupiter.api.Assertions.*;
+import com.nuclei.userservice.util.RequestHashUtil;
+import java.util.Optional;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import static org.mockito.Mockito.*;
@@ -27,13 +34,16 @@ class UserServiceImplTest {
     private UserRepository userRepository;
 
     @Mock
-    private PasswordUtil passwordUtil;
-
-    @Mock
     private EmailUtil emailUtil;
 
     @Mock
     private EmailEncryptionUtil emailEncryptionUtil;
+
+    @Mock
+    private UserMapper userMapper;
+
+    @Mock
+    private RequestHashUtil requestHashUtil;
 
     @Mock
     private IIdempotencyService idempotencyService;
@@ -51,41 +61,81 @@ class UserServiceImplTest {
         final String normalizedEmail = "prakhar@example.com";
         final String encryptedEmail = "encrypted-email";
         final String password = "Password@123";
-        final String hashedPassword = "hashed-password";
         final String idempotencyKey = "idempotency-key";
+        final String requestHash = "request-hash";
         final String lockValue = "lock-value";
+
+        final UserCreateRequestDto request =
+                new UserCreateRequestDto(
+                        name,
+                        email,
+                        password
+                );
+
+        final User user = new User();
+        user.setName(name);
+        user.setEmail(normalizedEmail);
 
         final User savedUser = new User();
         savedUser.setId(1L);
         savedUser.setName(name);
         savedUser.setEmail(normalizedEmail);
-        savedUser.setPasswordHash(hashedPassword);
 
-        when(idempotencyService.getResult(idempotencyKey))
-                .thenReturn(null);
+        final UserResponseDto userResponse =
+                new UserResponseDto(
+                        1L,
+                        name,
+                        normalizedEmail
+                );
+
         when(emailUtil.normalize(email))
                 .thenReturn(normalizedEmail);
+
+        when(requestHashUtil.generateHash(
+                name,
+                normalizedEmail
+        )).thenReturn(requestHash);
+
+        when(idempotencyService.getResult(
+                idempotencyKey,
+                requestHash
+        )).thenReturn(null);
+
         when(redisEmailLockService.acquireLock(normalizedEmail))
                 .thenReturn(lockValue);
+
         when(emailEncryptionUtil.encrypt(normalizedEmail))
                 .thenReturn(encryptedEmail);
-        when(userRepository.existsByEmail(encryptedEmail))
-                .thenReturn(false);
-        when(passwordUtil.hash(password))
-                .thenReturn(hashedPassword);
-        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
+
+        when(userRepository.findByEmail(encryptedEmail))
+                .thenReturn(java.util.Optional.empty());
+
+        when(userMapper.toEntity(
+                name,
+                normalizedEmail,
+                password
+        )).thenReturn(user);
+
+        when(userRepository.save(user))
                 .thenReturn(savedUser);
+
         when(idempotencyService.saveResult(
                 idempotencyKey,
-                savedUser.getId().toString()))
-                .thenReturn(true);
+                requestHash,
+                savedUser.getId().toString()
+        )).thenReturn(savedUser.getId().toString());
 
-        final UserResponseDto result = userService.createUser(
-                name,
-                email,
-                password,
-                idempotencyKey
-        );
+        when(userRepository.findById(savedUser.getId()))
+                .thenReturn(java.util.Optional.of(savedUser));
+
+        when(userMapper.toResponseDto(savedUser))
+                .thenReturn(userResponse);
+
+        final UserResponseDto result =
+                userService.createUser(
+                        request,
+                        idempotencyKey
+                );
 
         assertNotNull(result);
         assertEquals(savedUser.getId(), result.userId());
@@ -93,14 +143,51 @@ class UserServiceImplTest {
         assertEquals(savedUser.getEmail(), result.email());
 
         verify(emailUtil).normalize(email);
-        verify(redisEmailLockService).acquireLock(normalizedEmail);
-        verify(emailEncryptionUtil).encrypt(normalizedEmail);
-        verify(userRepository).existsByEmail(encryptedEmail);
-        verify(passwordUtil).hash(password);
-        verify(userRepository).save(org.mockito.ArgumentMatchers.any(User.class));
+
+        verify(requestHashUtil).generateHash(
+                name,
+                normalizedEmail
+        );
+
+        verify(idempotencyService, times(2)).getResult(
+                idempotencyKey,
+                requestHash
+        );
+
+        verify(redisEmailLockService).acquireLock(
+                normalizedEmail
+        );
+
+        verify(emailEncryptionUtil).encrypt(
+                normalizedEmail
+        );
+
+        verify(userRepository).findByEmail(
+                encryptedEmail
+        );
+
+        verify(userMapper).toEntity(
+                name,
+                normalizedEmail,
+                password
+        );
+
+        verify(userRepository).save(user);
+
         verify(idempotencyService).saveResult(
                 idempotencyKey,
-                savedUser.getId().toString());
+                requestHash,
+                savedUser.getId().toString()
+        );
+
+        verify(userRepository).findById(
+                savedUser.getId()
+        );
+
+        verify(userMapper).toResponseDto(
+                savedUser
+        );
+
         verify(redisEmailLockService).releaseLock(
                 normalizedEmail,
                 lockValue
@@ -111,164 +198,394 @@ class UserServiceImplTest {
     void createUser_shouldReturnExistingUserForExistingIdempotencyKey() {
         final String name = "Prakhar";
         final String email = "Prakhar@Example.com";
+        final String normalizedEmail = "prakhar@example.com";
         final String password = "Password@123";
         final String idempotencyKey = "existing-key";
+        final String requestHash = "request-hash";
         final Long existingUserId = 1L;
+
+        final UserCreateRequestDto request =
+                new UserCreateRequestDto(
+                        name,
+                        email,
+                        password
+                );
 
         final User existingUser = new User();
         existingUser.setId(existingUserId);
         existingUser.setName(name);
-        existingUser.setEmail("prakhar@example.com");
+        existingUser.setEmail(normalizedEmail);
 
-        when(idempotencyService.getResult(idempotencyKey))
-                .thenReturn(existingUserId.toString());
+        final UserResponseDto userResponse =
+                new UserResponseDto(
+                        existingUserId,
+                        name,
+                        normalizedEmail
+                );
+
+        when(emailUtil.normalize(email))
+                .thenReturn(normalizedEmail);
+
+        when(requestHashUtil.generateHash(
+                name,
+                normalizedEmail
+        )).thenReturn(requestHash);
+
+        when(idempotencyService.getResult(
+                idempotencyKey,
+                requestHash
+        )).thenReturn(existingUserId.toString());
+
         when(userRepository.findById(existingUserId))
                 .thenReturn(java.util.Optional.of(existingUser));
 
-        final UserResponseDto result = userService.createUser(
-                name,
-                email,
-                password,
-                idempotencyKey
-        );
+        when(userMapper.toResponseDto(existingUser))
+                .thenReturn(userResponse);
+
+        final UserResponseDto result =
+                userService.createUser(
+                        request,
+                        idempotencyKey
+                );
 
         assertNotNull(result);
         assertEquals(existingUserId, result.userId());
         assertEquals(existingUser.getName(), result.name());
         assertEquals(existingUser.getEmail(), result.email());
 
-        verify(idempotencyService).getResult(idempotencyKey);
-        verify(userRepository).findById(existingUserId);
+        verify(emailUtil).normalize(email);
+
+        verify(requestHashUtil).generateHash(
+                name,
+                normalizedEmail
+        );
+
+        verify(idempotencyService).getResult(
+                idempotencyKey,
+                requestHash
+        );
+
+        verify(userRepository).findById(
+                existingUserId
+        );
+
+        verify(userMapper).toResponseDto(
+                existingUser
+        );
 
         verifyNoInteractions(
-                emailUtil,
-                passwordUtil,
                 emailEncryptionUtil,
                 redisEmailLockService
         );
+
+        verify(userRepository, never())
+                .save(any(User.class));
+
+        verify(userMapper, never())
+                .toEntity(
+                        anyString(),
+                        anyString(),
+                        anyString()
+                );
     }
 
     @Test
-    void createUser_shouldThrowExceptionWhenEmailAlreadyExists() {
+    void createUser_shouldReturnExistingUserWhenEmailAlreadyExists() {
+        final String name = "Prakhar";
         final String email = "Prakhar@Example.com";
         final String normalizedEmail = "prakhar@example.com";
         final String encryptedEmail = "encrypted-email";
+        final String password = "Password@123";
         final String idempotencyKey = "idempotency-key";
+        final String requestHash = "request-hash";
         final String lockValue = "lock-value";
 
-        when(idempotencyService.getResult(idempotencyKey))
-                .thenReturn(null);
+        final User existingUser = new User();
+        existingUser.setId(1L);
+        existingUser.setName(name);
+        existingUser.setEmail(normalizedEmail);
+
+        final UserResponseDto existingUserResponse =
+                new UserResponseDto(
+                        1L,
+                        name,
+                        normalizedEmail
+                );
+
+        final UserCreateRequestDto request =
+                new UserCreateRequestDto(
+                        name,
+                        email,
+                        password
+                );
+
         when(emailUtil.normalize(email))
                 .thenReturn(normalizedEmail);
+
+        when(requestHashUtil.generateHash(
+                name,
+                normalizedEmail
+        )).thenReturn(requestHash);
+
+        when(idempotencyService.getResult(
+                idempotencyKey,
+                requestHash
+        )).thenReturn(null);
+
         when(redisEmailLockService.acquireLock(normalizedEmail))
                 .thenReturn(lockValue);
+
+        when(idempotencyService.getResult(
+                idempotencyKey,
+                requestHash
+        )).thenReturn(null);
+
         when(emailEncryptionUtil.encrypt(normalizedEmail))
                 .thenReturn(encryptedEmail);
-        when(userRepository.existsByEmail(encryptedEmail))
-                .thenReturn(true);
 
-        assertThrows(
-                UserAlreadyExistsException.class,
-                () -> userService.createUser(
-                        "Prakhar",
-                        email,
-                        "Password@123",
+        when(userRepository.findByEmail(encryptedEmail))
+                .thenReturn(java.util.Optional.of(existingUser));
+
+        when(userMapper.toResponseDto(existingUser))
+                .thenReturn(existingUserResponse);
+
+        final UserResponseDto result =
+                userService.createUser(
+                        request,
                         idempotencyKey
-                )
+                );
+
+        assertNotNull(result);
+        assertEquals(
+                existingUserResponse.userId(),
+                result.userId()
+        );
+        assertEquals(
+                existingUserResponse.name(),
+                result.name()
+        );
+        assertEquals(
+                existingUserResponse.email(),
+                result.email()
         );
 
-        verify(userRepository).existsByEmail(encryptedEmail);
+        verify(emailUtil).normalize(email);
+
+        verify(requestHashUtil).generateHash(
+                name,
+                normalizedEmail
+        );
+
+        verify(idempotencyService, times(2)).getResult(
+                idempotencyKey,
+                requestHash
+        );
+
+        verify(redisEmailLockService).acquireLock(
+                normalizedEmail
+        );
+
+        verify(emailEncryptionUtil).encrypt(
+                normalizedEmail
+        );
+
+        verify(userRepository).findByEmail(
+                encryptedEmail
+        );
+
+        verify(userMapper).toResponseDto(
+                existingUser
+        );
+
+        verify(userRepository, never())
+                .save(any(User.class));
+
+        verify(userMapper, never())
+                .toEntity(
+                        anyString(),
+                        anyString(),
+                        anyString()
+                );
+
         verify(redisEmailLockService).releaseLock(
                 normalizedEmail,
                 lockValue
         );
-
-        verifyNoInteractions(passwordUtil);
-        verify(userRepository, never()).save(org.mockito.ArgumentMatchers.any(User.class));
     }
 
     @Test
     void createUser_shouldThrowExceptionWhenLockAcquisitionFails() {
+        final String name = "Prakhar";
         final String email = "Prakhar@Example.com";
         final String normalizedEmail = "prakhar@example.com";
+        final String password = "Password@123";
         final String idempotencyKey = "idempotency-key";
+        final String requestHash = "request-hash";
 
-        when(idempotencyService.getResult(idempotencyKey))
-                .thenReturn(null);
+        final UserCreateRequestDto request =
+                new UserCreateRequestDto(
+                        name,
+                        email,
+                        password
+                );
+
         when(emailUtil.normalize(email))
                 .thenReturn(normalizedEmail);
+
+        when(requestHashUtil.generateHash(
+                name,
+                normalizedEmail
+        )).thenReturn(requestHash);
+
+        when(idempotencyService.getResult(
+                idempotencyKey,
+                requestHash
+        )).thenReturn(null);
+
         when(redisEmailLockService.acquireLock(normalizedEmail))
-                .thenThrow(new RedisLockAcquisitionException(
-                        "Failed to acquire Redis lock"
-                ));
+                .thenThrow(
+                        new RedisLockAcquisitionException(
+                                "Failed to acquire Redis lock"
+                        )
+                );
 
         assertThrows(
                 RedisLockAcquisitionException.class,
                 () -> userService.createUser(
-                        "Prakhar",
-                        email,
-                        "Password@123",
+                        request,
                         idempotencyKey
                 )
         );
 
         verify(emailUtil).normalize(email);
-        verify(redisEmailLockService).acquireLock(normalizedEmail);
+
+        verify(requestHashUtil).generateHash(
+                name,
+                normalizedEmail
+        );
+
+        verify(idempotencyService).getResult(
+                idempotencyKey,
+                requestHash
+        );
+
+        verify(redisEmailLockService).acquireLock(
+                normalizedEmail
+        );
 
         verifyNoInteractions(
                 emailEncryptionUtil,
-                passwordUtil
+                userMapper
         );
 
         verify(userRepository, never())
-                .existsByEmail(org.mockito.ArgumentMatchers.anyString());
+                .findByEmail(anyString());
 
         verify(userRepository, never())
-                .save(org.mockito.ArgumentMatchers.any(User.class));
+                .save(any(User.class));
     }
 
     @Test
     void createUser_shouldThrowExceptionWhenDatabaseRejectsDuplicateEmail() {
+        final String name = "Prakhar";
         final String email = "Prakhar@Example.com";
         final String normalizedEmail = "prakhar@example.com";
         final String encryptedEmail = "encrypted-email";
         final String password = "Password@123";
-        final String hashedPassword = "hashed-password";
         final String idempotencyKey = "idempotency-key";
+        final String requestHash = "request-hash";
         final String lockValue = "lock-value";
 
-        when(idempotencyService.getResult(idempotencyKey))
-                .thenReturn(null);
+        final UserCreateRequestDto request =
+                new UserCreateRequestDto(
+                        name,
+                        email,
+                        password
+                );
+
+        final User user = new User();
+        user.setName(name);
+        user.setEmail(normalizedEmail);
+
         when(emailUtil.normalize(email))
                 .thenReturn(normalizedEmail);
+
+        when(requestHashUtil.generateHash(
+                name,
+                normalizedEmail
+        )).thenReturn(requestHash);
+
+        when(idempotencyService.getResult(
+                idempotencyKey,
+                requestHash
+        )).thenReturn(null);
+
         when(redisEmailLockService.acquireLock(normalizedEmail))
                 .thenReturn(lockValue);
+
+        when(idempotencyService.getResult(
+                idempotencyKey,
+                requestHash
+        )).thenReturn(null);
+
         when(emailEncryptionUtil.encrypt(normalizedEmail))
                 .thenReturn(encryptedEmail);
-        when(userRepository.existsByEmail(encryptedEmail))
-                .thenReturn(false);
-        when(passwordUtil.hash(password))
-                .thenReturn(hashedPassword);
-        when(userRepository.save(org.mockito.ArgumentMatchers.any(User.class)))
-                .thenThrow(new DataIntegrityViolationException(
-                        "Duplicate email"
-                ));
+
+        when(userRepository.findByEmail(encryptedEmail))
+                .thenReturn(java.util.Optional.empty());
+
+        when(userMapper.toEntity(
+                name,
+                normalizedEmail,
+                password
+        )).thenReturn(user);
+
+        when(userRepository.save(user))
+                .thenThrow(
+                        new DataIntegrityViolationException(
+                                "Duplicate email"
+                        )
+                );
 
         assertThrows(
                 UserAlreadyExistsException.class,
                 () -> userService.createUser(
-                        "Prakhar",
-                        email,
-                        password,
+                        request,
                         idempotencyKey
                 )
         );
 
-        verify(userRepository).existsByEmail(encryptedEmail);
-        verify(passwordUtil).hash(password);
-        verify(userRepository).save(
-                org.mockito.ArgumentMatchers.any(User.class)
+        verify(emailUtil).normalize(email);
+
+        verify(requestHashUtil).generateHash(
+                name,
+                normalizedEmail
         );
+
+        verify(idempotencyService, times(2)).getResult(
+                idempotencyKey,
+                requestHash
+        );
+
+        verify(redisEmailLockService).acquireLock(
+                normalizedEmail
+        );
+
+        verify(emailEncryptionUtil).encrypt(
+                normalizedEmail
+        );
+
+        verify(userRepository).findByEmail(
+                encryptedEmail
+        );
+
+        verify(userMapper).toEntity(
+                name,
+                normalizedEmail,
+                password
+        );
+
+        verify(userRepository).save(user);
 
         verify(redisEmailLockService).releaseLock(
                 normalizedEmail,
@@ -283,65 +600,145 @@ class UserServiceImplTest {
         final String normalizedEmail = "prakhar@example.com";
         final String encryptedEmail = "encrypted-email";
         final String password = "Password@123";
-        final String hashedPassword = "hashed-password";
         final String idempotencyKey = "idempotency-key";
+        final String requestHash = "request-hash";
         final String lockValue = "lock-value";
+        final Long savedUserId = 1L;
         final Long existingUserId = 2L;
 
+        final UserCreateRequestDto request =
+                new UserCreateRequestDto(
+                        name,
+                        email,
+                        password
+                );
+
+        final User user = new User();
+        user.setName(name);
+        user.setEmail(normalizedEmail);
+
         final User savedUser = new User();
-        savedUser.setId(1L);
+        savedUser.setId(savedUserId);
         savedUser.setName(name);
         savedUser.setEmail(normalizedEmail);
-        savedUser.setPasswordHash(hashedPassword);
 
         final User existingUser = new User();
         existingUser.setId(existingUserId);
         existingUser.setName("Existing User");
         existingUser.setEmail("existing@example.com");
 
-        when(idempotencyService.getResult(idempotencyKey))
-                .thenReturn(
-                        null,
-                        null,
-                        existingUserId.toString()
+        final UserResponseDto existingUserResponse =
+                new UserResponseDto(
+                        existingUserId,
+                        "Existing User",
+                        "existing@example.com"
                 );
+
         when(emailUtil.normalize(email))
                 .thenReturn(normalizedEmail);
+
+        when(requestHashUtil.generateHash(
+                name,
+                normalizedEmail
+        )).thenReturn(requestHash);
+
+        when(idempotencyService.getResult(
+                idempotencyKey,
+                requestHash
+        )).thenReturn(
+                null,
+                null
+        );
+
         when(redisEmailLockService.acquireLock(normalizedEmail))
                 .thenReturn(lockValue);
+
         when(emailEncryptionUtil.encrypt(normalizedEmail))
                 .thenReturn(encryptedEmail);
-        when(userRepository.existsByEmail(encryptedEmail))
-                .thenReturn(false);
-        when(passwordUtil.hash(password))
-                .thenReturn(hashedPassword);
-        when(userRepository.save(
-                org.mockito.ArgumentMatchers.any(User.class)))
+
+        when(userRepository.findByEmail(encryptedEmail))
+                .thenReturn(java.util.Optional.empty());
+
+        when(userMapper.toEntity(
+                name,
+                normalizedEmail,
+                password
+        )).thenReturn(user);
+
+        when(userRepository.save(user))
                 .thenReturn(savedUser);
+
         when(idempotencyService.saveResult(
                 idempotencyKey,
-                savedUser.getId().toString()))
-                .thenReturn(false);
+                requestHash,
+                savedUserId.toString()
+        )).thenReturn(existingUserId.toString());
+
         when(userRepository.findById(existingUserId))
                 .thenReturn(java.util.Optional.of(existingUser));
 
-        final UserResponseDto result = userService.createUser(
-                name,
-                email,
-                password,
-                idempotencyKey
-        );
+        when(userMapper.toResponseDto(existingUser))
+                .thenReturn(existingUserResponse);
+
+        final UserResponseDto result =
+                userService.createUser(
+                        request,
+                        idempotencyKey
+                );
 
         assertNotNull(result);
-        assertEquals(existingUserId, result.userId());
-        assertEquals(existingUser.getName(), result.name());
-        assertEquals(existingUser.getEmail(), result.email());
+        assertEquals(
+                existingUserId,
+                result.userId()
+        );
+        assertEquals(
+                existingUser.getName(),
+                result.name()
+        );
+        assertEquals(
+                existingUser.getEmail(),
+                result.email()
+        );
+
+        verify(idempotencyService, times(2)).getResult(
+                idempotencyKey,
+                requestHash
+        );
+
+        verify(redisEmailLockService).acquireLock(
+                normalizedEmail
+        );
+
+        verify(emailEncryptionUtil).encrypt(
+                normalizedEmail
+        );
+
+        verify(userRepository).findByEmail(
+                encryptedEmail
+        );
+
+        verify(userMapper).toEntity(
+                name,
+                normalizedEmail,
+                password
+        );
+
+        verify(userRepository).save(user);
 
         verify(idempotencyService).saveResult(
                 idempotencyKey,
-                savedUser.getId().toString()
+                requestHash,
+                savedUserId.toString()
         );
-        verify(userRepository).findById(existingUserId);
+
+        verify(userRepository).findById(
+                existingUserId
+        );
+
+        verify(userMapper).toResponseDto(
+                existingUser
+        );
+
         verify(redisEmailLockService).releaseLock(
                 normalizedEmail,
                 lockValue
@@ -351,22 +748,45 @@ class UserServiceImplTest {
     @Test
     void getUser_shouldReturnUserSuccessfully() {
         final Long userId = 1L;
+
         final User user = new User();
         user.setId(userId);
         user.setName("Prakhar");
         user.setEmail("prakhar@example.com");
 
+        final UserResponseDto userResponse =
+                new UserResponseDto(
+                        userId,
+                        "Prakhar",
+                        "prakhar@example.com"
+                );
+
         when(userRepository.findById(userId))
                 .thenReturn(java.util.Optional.of(user));
 
-        final UserResponseDto result = userService.getUser(userId);
+        when(userMapper.toResponseDto(user))
+                .thenReturn(userResponse);
+
+        final UserResponseDto result =
+                userService.getUser(userId);
 
         assertNotNull(result);
-        assertEquals(userId, result.userId());
-        assertEquals(user.getName(), result.name());
-        assertEquals(user.getEmail(), result.email());
+        assertEquals(
+                userResponse.userId(),
+                result.userId()
+        );
+        assertEquals(
+                userResponse.name(),
+                result.name()
+        );
+        assertEquals(
+                userResponse.email(),
+                result.email()
+        );
 
         verify(userRepository).findById(userId);
+
+        verify(userMapper).toResponseDto(user);
     }
 
     @Test
@@ -374,7 +794,7 @@ class UserServiceImplTest {
         final Long userId = 999L;
 
         when(userRepository.findById(userId))
-                .thenReturn(java.util.Optional.empty());
+                .thenReturn(Optional.empty());
 
         assertThrows(
                 UserNotFoundException.class,
@@ -382,5 +802,7 @@ class UserServiceImplTest {
         );
 
         verify(userRepository).findById(userId);
+
+        verifyNoInteractions(userMapper);
     }
 }

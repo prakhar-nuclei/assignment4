@@ -1,6 +1,9 @@
 package com.nuclei.userservice.service;
 
 import com.nuclei.userservice.exception.RedisLockAcquisitionException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.Collections;
 import java.util.UUID;
@@ -43,8 +46,11 @@ public class RedisEmailLockService {
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public String acquireLock(final String normalizedEmail) {
 
+        final String hashedEmail =
+                hashEmail(normalizedEmail);
+
         final String lockKey =
-                LOCK_KEY_PREFIX + normalizedEmail;
+                LOCK_KEY_PREFIX + hashedEmail;
 
         final String lockValue =
                 UUID.randomUUID().toString();
@@ -87,13 +93,42 @@ public class RedisEmailLockService {
             return;
         }
 
+        final String hashedEmail =
+                hashEmail(normalizedEmail);
+
         final String lockKey =
-                LOCK_KEY_PREFIX + normalizedEmail;
+                LOCK_KEY_PREFIX + hashedEmail;
 
         redisTemplate.execute(
                 RELEASE_LOCK_SCRIPT,
                 Collections.singletonList(lockKey),
                 lockValue
         );
+    }
+
+    private String hashEmail(final String normalizedEmail) {
+        try {
+            final MessageDigest digest =
+                    MessageDigest.getInstance("SHA-256");
+
+            final byte[] hash =
+                    digest.digest(
+                            normalizedEmail.getBytes(StandardCharsets.UTF_8)
+                    );
+
+            final StringBuilder result = new StringBuilder();
+
+            for (final byte value : hash) {
+                result.append(String.format("%02x", value));
+            }
+
+            return result.toString();
+
+        } catch (final NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(
+                    "SHA-256 algorithm is not available",
+                    exception
+            );
+        }
     }
 }

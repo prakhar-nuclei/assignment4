@@ -10,7 +10,7 @@ public class UserRequestValidator {
     private static final int MAX_PASSWORD_LENGTH = 72;
 
     private static final String EMAIL_REGEX =
-            "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$";
+            "^[A-Za-z0-9]+([._%+-][A-Za-z0-9]+)*@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$";
 
     public void validateCreateUser(
             final String name,
