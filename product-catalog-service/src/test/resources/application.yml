@@ -12,15 +12,6 @@ spring:
     show-sql: false
     open-in-view: false
 
-  data:
-    redis:
-      host: localhost
-      port: 6380
-
 grpc:
   server:
     port: 6566
-
-jwt:
-  public-key-path: src/test/resources/keys/public-key.pem
-  issuer: test-issuer

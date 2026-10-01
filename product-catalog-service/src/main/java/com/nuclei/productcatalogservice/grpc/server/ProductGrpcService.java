@@ -9,57 +9,71 @@ import com.nuclei.product.proto.UpdateProductRequest;
 import com.nuclei.product.proto.UpdateStockRequest;
 import com.nuclei.productcatalogservice.dto.ProductResponseDto;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
+import com.nuclei.productcatalogservice.exception.InvalidProductRequestException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
 import com.nuclei.productcatalogservice.exception.ProductConcurrencyException;
 import com.nuclei.productcatalogservice.exception.ProductNotFoundException;
 import com.nuclei.productcatalogservice.mapper.ProductGrpcMapper;
 import com.nuclei.productcatalogservice.service.ProductService;
+import com.nuclei.productcatalogservice.validator.ProductRequestValidator;
 import java.math.BigDecimal;
 import com.google.protobuf.Empty;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import org.springframework.grpc.server.service.GrpcService;
 
+@SuppressWarnings("PMD.AvoidCatchingGenericException")
 @GrpcService
 public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBase {
 
     private final ProductService productService;
     private final ProductGrpcMapper productGrpcMapper;
+    private final ProductRequestValidator productRequestValidator;
     private static final String INVALID_PRODUCT_ID_MESSAGE =
             "Product ID must be greater than zero";
+    private static final String INTERNAL_SERVER_ERROR =
+            "Internal server error";
 
     public ProductGrpcService(
             final ProductService productService,
-            final ProductGrpcMapper productGrpcMapper) {
+            final ProductGrpcMapper productGrpcMapper,
+            final ProductRequestValidator productRequestValidator) {
+        super();
         this.productService = productService;
         this.productGrpcMapper = productGrpcMapper;
+        this.productRequestValidator = productRequestValidator;
     }
 
     @Override
     public void getProduct(
-            GetProductRequest request,
-            StreamObserver<ProductResponse> responseObserver) {
-
-        if (request.getProductId() <= 0) {
-            sendError(
-                    responseObserver,
-                    Status.INVALID_ARGUMENT,
-                    INVALID_PRODUCT_ID_MESSAGE
-            );
-            return;
-        }
+           final GetProductRequest request,
+           final StreamObserver<ProductResponse> responseObserver) {
 
         try {
-            ProductResponseDto product =
+            productRequestValidator.validateGetProductRequest(request);
+
+             final ProductResponseDto product =
                     productService.getProduct(request.getProductId());
 
             responseObserver.onNext(productGrpcMapper.toProductResponse(product));
             responseObserver.onCompleted();
+        } catch (InvalidProductRequestException exception) {
+            sendError(
+                    responseObserver,
+                    Status.INVALID_ARGUMENT,
+                    exception.getMessage()
+            );
         } catch (ProductNotFoundException exception) {
             sendError(
                     responseObserver,
                     Status.NOT_FOUND,
                     exception.getMessage()
+            );
+        } catch (Exception exception) {
+            sendError(
+                    responseObserver,
+                    Status.INTERNAL,
+                    INTERNAL_SERVER_ERROR
             );
         }
     }
@@ -70,7 +84,9 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
             final StreamObserver<ProductResponse> responseObserver) {
 
         try {
-            ProductResponseDto product =
+            productRequestValidator.validateCreateProductRequest(request);
+
+            final ProductResponseDto product =
                     productService.createProduct(
                             request.getName(),
                             new BigDecimal(request.getPrice()),
@@ -81,11 +97,17 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
                     productGrpcMapper.toProductResponse(product)
             );
             responseObserver.onCompleted();
-        } catch (NumberFormatException exception) {
+        } catch (InvalidProductRequestException exception) {
             sendError(
                     responseObserver,
                     Status.INVALID_ARGUMENT,
-                    "Price must be a valid monetary value"
+                    exception.getMessage()
+            );
+        } catch (Exception exception) {
+            sendError(
+                    responseObserver,
+                    Status.INTERNAL,
+                    INTERNAL_SERVER_ERROR
             );
         }
     }
@@ -95,17 +117,10 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
             final UpdateProductRequest request,
             final StreamObserver<ProductResponse> responseObserver) {
 
-        if (request.getProductId() <= 0) {
-            sendError(
-                    responseObserver,
-                    Status.INVALID_ARGUMENT,
-                    INVALID_PRODUCT_ID_MESSAGE
-            );
-            return;
-        }
-
         try {
-            ProductResponseDto product =
+            productRequestValidator.validateUpdateProductRequest(request);
+
+           final ProductResponseDto product =
                     productService.updateProduct(
                             request.getProductId(),
                             request.getName(),
@@ -117,11 +132,11 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
                     productGrpcMapper.toProductResponse(product)
             );
             responseObserver.onCompleted();
-        } catch (NumberFormatException exception) {
+        } catch (InvalidProductRequestException exception) {
             sendError(
                     responseObserver,
                     Status.INVALID_ARGUMENT,
-                    "Price must be a valid monetary value"
+                    exception.getMessage()
             );
         } catch (ProductNotFoundException exception) {
             sendError(
@@ -134,6 +149,12 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
                     responseObserver,
                     Status.ABORTED,
                     exception.getMessage()
+            );
+        } catch (Exception exception) {
+            sendError(
+                    responseObserver,
+                    Status.INTERNAL,
+                    INTERNAL_SERVER_ERROR
             );
         }
     }
@@ -169,25 +190,24 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
                     Status.ABORTED,
                     exception.getMessage()
             );
+        } catch (Exception exception) {
+            sendError(
+                    responseObserver,
+                    Status.INTERNAL,
+                    INTERNAL_SERVER_ERROR
+            );
         }
     }
 
     @Override
     public void updateStock(
-            UpdateStockRequest request,
-            StreamObserver<ProductResponse> responseObserver) {
-
-        if (request.getProductId() <= 0) {
-            sendError(
-                    responseObserver,
-                    Status.INVALID_ARGUMENT,
-                    INVALID_PRODUCT_ID_MESSAGE
-            );
-            return;
-        }
+           final UpdateStockRequest request,
+           final StreamObserver<ProductResponse> responseObserver) {
 
         try {
-            ProductResponseDto product =
+            productRequestValidator.validateUpdateStockRequest(request);
+
+           final ProductResponseDto product =
                     productService.updateStock(
                             request.getProductId(),
                             request.getQuantity()
@@ -195,11 +215,11 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
 
             responseObserver.onNext(productGrpcMapper.toProductResponse(product));
             responseObserver.onCompleted();
-        } catch (InvalidStockOperationException exception) {
-            sendError(
-                    responseObserver,
-                    Status.INVALID_ARGUMENT,
-                    exception.getMessage()
+        } catch (InvalidProductRequestException | InvalidStockOperationException exception) {
+        sendError(
+                responseObserver,
+                Status.INVALID_ARGUMENT,
+                exception.getMessage()
             );
         } catch (ProductNotFoundException exception) {
             sendError(
@@ -218,6 +238,12 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
                     responseObserver,
                     Status.ABORTED,
                     exception.getMessage()
+            );
+        } catch (Exception exception) {
+            sendError(
+                    responseObserver,
+                    Status.INTERNAL,
+                    INTERNAL_SERVER_ERROR
             );
         }
     }

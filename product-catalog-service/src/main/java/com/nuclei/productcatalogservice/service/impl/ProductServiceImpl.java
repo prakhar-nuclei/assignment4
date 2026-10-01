@@ -5,66 +5,67 @@ import com.nuclei.productcatalogservice.entity.Product;
 import com.nuclei.productcatalogservice.enums.EntityStatusEnum;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
+import com.nuclei.productcatalogservice.exception.ProductConcurrencyException;
 import com.nuclei.productcatalogservice.exception.ProductNotFoundException;
 import com.nuclei.productcatalogservice.mapper.ProductMapper;
 import com.nuclei.productcatalogservice.repository.ProductRepository;
 import com.nuclei.productcatalogservice.service.ProductService;
-import com.nuclei.productcatalogservice.service.ProductStockLock;
 import java.math.BigDecimal;
+import java.util.function.Supplier;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class ProductServiceImpl implements ProductService {
 
+    private static final int MAX_LOCK_RETRIES = 3;
+
     private final ProductRepository productRepository;
-    private final ProductStockLock productStockLock;
     private final TransactionTemplate transactionTemplate;
     private final ProductMapper productMapper;
 
     public ProductServiceImpl(
-           final ProductRepository productRepository,
-           final ProductStockLock productStockLock,
-           final TransactionTemplate transactionTemplate,
-           final ProductMapper productMapper) {
+            final ProductRepository productRepository,
+            final TransactionTemplate transactionTemplate,
+            final ProductMapper productMapper) {
         this.productRepository = productRepository;
-        this.productStockLock = productStockLock;
         this.transactionTemplate = transactionTemplate;
         this.productMapper = productMapper;
     }
 
     @Override
-    public ProductResponseDto getProduct(Long productId) {
-        Product product = productRepository.findById(productId)
+    public ProductResponseDto getProduct(final Long productId) {
+        final Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new ProductNotFoundException(productId));
 
         return productMapper.toResponseDto(product);
     }
 
     @Override
-    public ProductResponseDto updateStock(Long productId, Integer quantity) {
-        String lockToken = productStockLock.acquire(productId);
+    public ProductResponseDto updateStock(
+            final Long productId,
+            final Integer quantity) {
 
-        try {
-            return transactionTemplate.execute(status ->
-                    updateStockInTransaction(productId, quantity));
-        } finally {
-            productStockLock.release(productId, lockToken);
-        }
+        return executeWithLockRetry(
+                () -> transactionTemplate.execute(status ->
+                        updateStockInTransaction(productId, quantity)),
+                productId
+        );
     }
 
     private ProductResponseDto updateStockInTransaction(
-            Long productId,
-            Integer quantity) {
+            final Long productId,
+            final Integer quantity) {
 
         if (quantity == 0) {
             throw new InvalidStockOperationException();
         }
 
-        Product product = productRepository.findById(productId)
+        final Product product = productRepository.findByIdForUpdate(productId)
                 .orElseThrow(() -> new ProductNotFoundException(productId));
 
-        int updatedStock = product.getStock() + quantity;
+        final int updatedStock = product.getStock() + quantity;
 
         if (updatedStock < 0) {
             throw new InsufficientStockException(productId, quantity);
@@ -72,24 +73,24 @@ public class ProductServiceImpl implements ProductService {
 
         product.setStock(updatedStock);
 
-        Product savedProduct = productRepository.save(product);
+        final Product savedProduct = productRepository.save(product);
 
         return productMapper.toResponseDto(savedProduct);
     }
 
     @Override
     public ProductResponseDto createProduct(
-            String name,
-            BigDecimal price,
-            Integer stock) {
+            final String name,
+            final BigDecimal price,
+            final Integer stock) {
 
         return transactionTemplate.execute(status -> {
-            Product product = new Product();
+            final Product product = new Product();
             product.setName(name);
             product.setPrice(price);
             product.setStock(stock);
 
-            Product savedProduct = productRepository.save(product);
+            final Product savedProduct = productRepository.save(product);
 
             return productMapper.toResponseDto(savedProduct);
         });
@@ -97,45 +98,60 @@ public class ProductServiceImpl implements ProductService {
 
     @Override
     public ProductResponseDto updateProduct(
-            Long productId,
-            String name,
-            BigDecimal price,
-            Integer stock) {
+            final Long productId,
+            final String name,
+            final BigDecimal price,
+            final Integer stock) {
 
-        String lockToken = productStockLock.acquire(productId);
+        return executeWithLockRetry(
+                () -> transactionTemplate.execute(status -> {
+                    final Product product = productRepository.findByIdForUpdate(productId)
+                            .orElseThrow(() -> new ProductNotFoundException(productId));
 
-        try {
-            return transactionTemplate.execute(status -> {
-                Product product = productRepository.findById(productId)
-                        .orElseThrow(() -> new ProductNotFoundException(productId));
+                    product.setName(name);
+                    product.setPrice(price);
+                    product.setStock(stock);
 
-                product.setName(name);
-                product.setPrice(price);
-                product.setStock(stock);
+                    final Product savedProduct = productRepository.save(product);
 
-                Product savedProduct = productRepository.save(product);
-
-                return productMapper.toResponseDto(savedProduct);
-            });
-        } finally {
-            productStockLock.release(productId, lockToken);
-        }
+                    return productMapper.toResponseDto(savedProduct);
+                }),
+                productId
+        );
     }
 
     @Override
-    public void deleteProduct(Long productId) {
-        String lockToken = productStockLock.acquire(productId);
+    public void deleteProduct(final Long productId) {
+        executeWithLockRetry(
+                () -> {
+                    transactionTemplate.executeWithoutResult(status -> {
+                        final Product product = productRepository.findByIdForUpdate(productId)
+                                .orElseThrow(() -> new ProductNotFoundException(productId));
 
-        try {
-            transactionTemplate.executeWithoutResult(status -> {
-                Product product = productRepository.findById(productId)
-                        .orElseThrow(() -> new ProductNotFoundException(productId));
+                        product.setStatus(EntityStatusEnum.INACTIVE);
+                        productRepository.save(product);
+                    });
 
-                product.setStatus(EntityStatusEnum.INACTIVE);
-                productRepository.save(product);
-            });
-        } finally {
-            productStockLock.release(productId, lockToken);
+                    return null;
+                },
+                productId
+        );
+    }
+
+    private <T> T executeWithLockRetry(
+            final Supplier<T> transactionOperation,
+            final Long productId) {
+
+        for (int attempt = 1; attempt <= MAX_LOCK_RETRIES; attempt++) {
+            try {
+                return transactionOperation.get();
+            } catch (PessimisticLockingFailureException exception) {
+                if (attempt == MAX_LOCK_RETRIES) {
+                    throw new ProductConcurrencyException(productId,exception);
+                }
+            }
         }
+
+        throw new ProductConcurrencyException(productId);
     }
 }

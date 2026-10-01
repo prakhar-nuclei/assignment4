@@ -2,12 +2,14 @@ package com.nuclei.productcatalogservice.mapper;
 
 import com.nuclei.product.proto.ProductResponse;
 import com.nuclei.productcatalogservice.dto.ProductResponseDto;
+import lombok.NoArgsConstructor;
 import org.springframework.stereotype.Component;
 
 @Component
+@NoArgsConstructor
 public class ProductGrpcMapper {
 
-    public ProductResponse toProductResponse(ProductResponseDto product) {
+    public ProductResponse toProductResponse(final ProductResponseDto product) {
         return ProductResponse.newBuilder()
                 .setProductId(product.productId())
                 .setName(product.name())

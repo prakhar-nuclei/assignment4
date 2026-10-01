@@ -6,9 +6,12 @@ import org.springframework.boot.grpc.server.autoconfigure.security.GrpcServerOAu
 
 @SpringBootApplication(
         exclude = GrpcServerOAuth2ResourceServerAutoConfiguration.class)
-public class ProductCatalogServiceApplication {
+public final class ProductCatalogServiceApplication {
 
-    public static void main(String[] args) {
+    private ProductCatalogServiceApplication() {
+    }
+
+    public static void main(final String[] args) {
         SpringApplication.run(ProductCatalogServiceApplication.class, args);
     }
 

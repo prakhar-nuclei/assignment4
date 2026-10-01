@@ -12,11 +12,9 @@ import com.nuclei.productcatalogservice.entity.Product;
 import com.nuclei.productcatalogservice.enums.EntityStatusEnum;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
-import com.nuclei.productcatalogservice.exception.ProductConcurrencyException;
 import com.nuclei.productcatalogservice.exception.ProductNotFoundException;
 import com.nuclei.productcatalogservice.mapper.ProductMapper;
 import com.nuclei.productcatalogservice.repository.ProductRepository;
-import com.nuclei.productcatalogservice.service.ProductStockLock;
 import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -26,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -35,9 +34,6 @@ class ProductServiceImplTest {
 
     @Mock
     private ProductRepository productRepository;
-
-    @Mock
-    private ProductStockLock productStockLock;
 
     @Mock
     private TransactionTemplate transactionTemplate;
@@ -99,8 +95,7 @@ class ProductServiceImplTest {
     void updateStockShouldIncreaseStockWhenQuantityIsPositive() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
 
         when(productMapper.toResponseDto(product))
@@ -116,9 +111,7 @@ class ProductServiceImplTest {
         assertEquals(15, response.stock());
         assertEquals(15, product.getStock());
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
     }
@@ -127,8 +120,7 @@ class ProductServiceImplTest {
     void updateStockShouldDecreaseStockWhenQuantityIsNegative() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
 
         when(productMapper.toResponseDto(product))
@@ -144,9 +136,7 @@ class ProductServiceImplTest {
         assertEquals(6, response.stock());
         assertEquals(6, product.getStock());
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
     }
@@ -155,15 +145,11 @@ class ProductServiceImplTest {
     void updateStockShouldThrowExceptionWhenQuantityIsZero() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-
         assertThrows(
                 InvalidStockOperationException.class,
                 () -> productService.updateStock(1L, 0)
         );
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
         verifyNoMoreInteractions(productRepository);
     }
 
@@ -171,17 +157,15 @@ class ProductServiceImplTest {
     void updateStockShouldThrowExceptionWhenProductDoesNotExist() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.empty());
+
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
 
         assertThrows(
                 ProductNotFoundException.class,
                 () -> productService.updateStock(1L, 5)
         );
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verifyNoMoreInteractions(productRepository);
     }
 
@@ -189,8 +173,7 @@ class ProductServiceImplTest {
     void updateStockShouldThrowExceptionWhenStockIsInsufficient() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
 
         assertThrows(
                 InsufficientStockException.class,
@@ -199,9 +182,7 @@ class ProductServiceImplTest {
 
         assertEquals(10, product.getStock());
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verifyNoMoreInteractions(productRepository);
     }
 
@@ -209,8 +190,7 @@ class ProductServiceImplTest {
     void updateStockShouldReturnUpdatedProductWhenStockIsUpdated() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
 
         when(productMapper.toResponseDto(product))
@@ -228,33 +208,43 @@ class ProductServiceImplTest {
         assertEquals(product.getPrice(), response.price());
         assertEquals(15, response.stock());
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
     }
 
     @Test
-    void updateStockShouldThrowConcurrencyExceptionWhenLockCannotBeAcquired() {
-        when(productStockLock.acquire(1L))
-                .thenThrow(new ProductConcurrencyException(1L));
+    void updateStockShouldRetryWhenPessimisticLockFails() {
+        mockSuccessfulTransaction();
 
-        assertThrows(
-                ProductConcurrencyException.class,
-                () -> productService.updateStock(1L, 5)
-        );
+        when(productRepository.findByIdForUpdate(1L))
+                .thenThrow(new PessimisticLockingFailureException("Lock failed"))
+                .thenReturn(Optional.of(product));
 
-        verify(productStockLock).acquire(1L);
-        verifyNoMoreInteractions(productRepository);
+        when(productRepository.save(product)).thenReturn(product);
+
+        when(productMapper.toResponseDto(product))
+                .thenReturn(new ProductResponseDto(
+                        1L,
+                        "Laptop",
+                        new BigDecimal("50000.00"),
+                        15
+                ));
+
+        var response = productService.updateStock(1L, 5);
+
+        assertEquals(15, response.stock());
+
+        verify(productRepository, org.mockito.Mockito.times(2))
+                .findByIdForUpdate(1L);
+        verify(productRepository).save(product);
     }
 
     @Test
-    void updateStockShouldReleaseLockWhenTransactionFails() {
+    void updateStockShouldPropagateTransactionFailure() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product))
                 .thenThrow(new RuntimeException("Database failure"));
 
@@ -263,9 +253,7 @@ class ProductServiceImplTest {
                 () -> productService.updateStock(1L, 5)
         );
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
     }
@@ -324,8 +312,7 @@ class ProductServiceImplTest {
     void updateProductShouldUpdateAndReturnProduct() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
 
         ProductResponseDto response = new ProductResponseDto(
@@ -353,9 +340,7 @@ class ProductServiceImplTest {
         assertEquals(new BigDecimal("75000.00"), product.getPrice());
         assertEquals(20, product.getStock());
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verify(productRepository).save(product);
         verify(productMapper).toResponseDto(product);
         verifyNoMoreInteractions(productRepository);
@@ -365,8 +350,7 @@ class ProductServiceImplTest {
     void updateProductShouldThrowExceptionWhenProductDoesNotExist() {
         mockSuccessfulTransaction();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.empty());
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
 
         assertThrows(
                 ProductNotFoundException.class,
@@ -378,9 +362,7 @@ class ProductServiceImplTest {
                 )
         );
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verifyNoMoreInteractions(productRepository);
     }
 
@@ -388,17 +370,14 @@ class ProductServiceImplTest {
     void deleteProductShouldMarkProductAsInactive() {
         mockSuccessfulTransactionWithoutResult();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product)).thenReturn(product);
 
         productService.deleteProduct(1L);
 
         assertEquals(EntityStatusEnum.INACTIVE, product.getStatus());
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
     }
@@ -407,26 +386,22 @@ class ProductServiceImplTest {
     void deleteProductShouldThrowExceptionWhenProductDoesNotExist() {
         mockSuccessfulTransactionWithoutResult();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.empty());
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.empty());
 
         assertThrows(
                 ProductNotFoundException.class,
                 () -> productService.deleteProduct(1L)
         );
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verifyNoMoreInteractions(productRepository);
     }
 
     @Test
-    void deleteProductShouldReleaseLockWhenTransactionFails() {
+    void deleteProductShouldPropagateTransactionFailure() {
         mockSuccessfulTransactionWithoutResult();
 
-        when(productStockLock.acquire(1L)).thenReturn("lock-token");
-        when(productRepository.findById(1L)).thenReturn(Optional.of(product));
+        when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
         when(productRepository.save(product))
                 .thenThrow(new RuntimeException("Database failure"));
 
@@ -435,24 +410,8 @@ class ProductServiceImplTest {
                 () -> productService.deleteProduct(1L)
         );
 
-        verify(productStockLock).acquire(1L);
-        verify(productStockLock).release(1L, "lock-token");
-        verify(productRepository).findById(1L);
+        verify(productRepository).findByIdForUpdate(1L);
         verify(productRepository).save(product);
-        verifyNoMoreInteractions(productRepository);
-    }
-
-    @Test
-    void deleteProductShouldThrowConcurrencyExceptionWhenLockCannotBeAcquired() {
-        when(productStockLock.acquire(1L))
-                .thenThrow(new ProductConcurrencyException(1L));
-
-        assertThrows(
-                ProductConcurrencyException.class,
-                () -> productService.deleteProduct(1L)
-        );
-
-        verify(productStockLock).acquire(1L);
         verifyNoMoreInteractions(productRepository);
     }
 

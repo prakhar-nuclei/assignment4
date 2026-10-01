@@ -14,11 +14,13 @@ import com.nuclei.product.proto.UpdateProductRequest;
 import com.nuclei.product.proto.UpdateStockRequest;
 import com.nuclei.productcatalogservice.dto.ProductResponseDto;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
+import com.nuclei.productcatalogservice.exception.InvalidProductRequestException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
 import com.nuclei.productcatalogservice.exception.ProductConcurrencyException;
 import com.nuclei.productcatalogservice.exception.ProductNotFoundException;
 import com.nuclei.productcatalogservice.mapper.ProductGrpcMapper;
 import com.nuclei.productcatalogservice.service.ProductService;
+import com.nuclei.productcatalogservice.validator.ProductRequestValidator;
 import java.math.BigDecimal;
 import com.google.protobuf.Empty;
 import io.grpc.Status;
@@ -45,13 +47,17 @@ class ProductGrpcServiceTest {
     @Mock
     private StreamObserver<Empty> deleteResponseObserver;
 
+    @Mock
+    private ProductRequestValidator productRequestValidator;
+
     private ProductGrpcService productGrpcService;
 
     @BeforeEach
     void setUp() {
         productGrpcService = new ProductGrpcService(
                 productService,
-                productGrpcMapper
+                productGrpcMapper,
+                productRequestValidator
         );
     }
 
@@ -103,12 +109,16 @@ class ProductGrpcServiceTest {
 
     @Test
     void getProductShouldReturnInvalidArgumentWhenProductIdIsInvalid() {
-        productGrpcService.getProduct(
-                GetProductRequest.newBuilder()
-                        .setProductId(0L)
-                        .build(),
-                responseObserver
-        );
+        GetProductRequest request = GetProductRequest.newBuilder()
+                .setProductId(0L)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Product ID must be greater than zero"
+        )).when(productRequestValidator)
+                .validateGetProductRequest(request);
+
+        productGrpcService.getProduct(request, responseObserver);
 
         verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
 
@@ -192,12 +202,19 @@ class ProductGrpcServiceTest {
 
     @Test
     void createProductShouldReturnInvalidArgumentWhenPriceIsInvalid() {
+        CreateProductRequest request = CreateProductRequest.newBuilder()
+                .setName("Laptop")
+                .setPrice("invalid-price")
+                .setStock(10)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Price must be a valid monetary value"
+        )).when(productRequestValidator)
+                .validateCreateProductRequest(request);
+
         productGrpcService.createProduct(
-                CreateProductRequest.newBuilder()
-                        .setName("Laptop")
-                        .setPrice("invalid-price")
-                        .setStock(10)
-                        .build(),
+                request,
                 responseObserver
         );
 
@@ -267,30 +284,49 @@ class ProductGrpcServiceTest {
 
     @Test
     void updateProductShouldReturnInvalidArgumentWhenProductIdIsInvalid() {
+        UpdateProductRequest request = UpdateProductRequest.newBuilder()
+                .setProductId(0L)
+                .setName("Gaming Laptop")
+                .setPrice("75000.00")
+                .setStock(20)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Product ID must be greater than zero"
+        )).when(productRequestValidator)
+                .validateUpdateProductRequest(request);
+
         productGrpcService.updateProduct(
-                UpdateProductRequest.newBuilder()
-                        .setProductId(0L)
-                        .setName("Gaming Laptop")
-                        .setPrice("75000.00")
-                        .setStock(20)
-                        .build(),
+                request,
                 responseObserver
         );
 
         verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
 
-        verifyNoMoreInteractions(productService);
+        verify(productService, never()).updateProduct(
+                0L,
+                "Gaming Laptop",
+                new BigDecimal("75000.00"),
+                20
+        );
     }
 
     @Test
     void updateProductShouldReturnInvalidArgumentWhenPriceIsInvalid() {
+        UpdateProductRequest request = UpdateProductRequest.newBuilder()
+                .setProductId(1L)
+                .setName("Gaming Laptop")
+                .setPrice("invalid-price")
+                .setStock(20)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Price must be a valid monetary value"
+        )).when(productRequestValidator)
+                .validateUpdateProductRequest(request);
+
         productGrpcService.updateProduct(
-                UpdateProductRequest.newBuilder()
-                        .setProductId(1L)
-                        .setName("Gaming Laptop")
-                        .setPrice("invalid-price")
-                        .setStock(20)
-                        .build(),
+                request,
                 responseObserver
         );
 
@@ -478,11 +514,18 @@ class ProductGrpcServiceTest {
 
     @Test
     void updateStockShouldReturnInvalidArgumentWhenProductIdIsInvalid() {
+        UpdateStockRequest request = UpdateStockRequest.newBuilder()
+                .setProductId(0L)
+                .setQuantity(5)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Product ID must be greater than zero"
+        )).when(productRequestValidator)
+                .validateUpdateStockRequest(request);
+
         productGrpcService.updateStock(
-                UpdateStockRequest.newBuilder()
-                        .setProductId(0L)
-                        .setQuantity(5)
-                        .build(),
+                request,
                 responseObserver
         );
 

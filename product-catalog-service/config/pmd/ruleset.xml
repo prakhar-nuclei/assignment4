@@ -22,25 +22,12 @@
 
     <!-- Code Style -->
     <rule ref="category/java/codestyle.xml">
-        <exclude name="AtLeastOneConstructor"/>
-        <exclude name="OnlyOneReturn"/>
-        <exclude name="MethodArgumentCouldBeFinal"/>
-        <exclude name="LocalVariableCouldBeFinal"/>
-        <exclude name="FinalParameterInAbstractMethod"/>
-        <exclude name="TypeParameterNamingConventions"/>
-        <exclude name="ShortClassName"/>
-        <exclude name="CallSuperInConstructor"/>
+
     </rule>
 
     <!-- Design -->
     <rule ref="category/java/design.xml">
-        <exclude name="LawOfDemeter"/>
-        <exclude name="ExcessiveParameterList"/>
-        <exclude name="DataClass"/>
-        <exclude name="TooManyFields"/>
-        <exclude name="NcssCount"/>
-        <exclude name="UseUtilityClass"/>
-        <exclude name="UseObjectForClearerAPI"/>
+
     </rule>
 
     <!-- Error Prone -->
