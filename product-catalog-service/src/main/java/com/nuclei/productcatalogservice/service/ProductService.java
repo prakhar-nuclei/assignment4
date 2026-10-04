@@ -7,7 +7,7 @@ public interface ProductService {
 
     ProductResponseDto getProduct(Long productId);
 
-    ProductResponseDto updateStock(Long productId, Integer quantity);
+    ProductResponseDto updateStock(Long productId, Integer quantity,String operationId);
 
     ProductResponseDto createProduct(
             String name,
@@ -19,6 +19,11 @@ public interface ProductService {
             String name,
             BigDecimal price,
             Integer stock);
+
+    ProductResponseDto compensateStock(
+            Long productId,
+            Integer quantity,
+            String compensationId);
 
     void deleteProduct(Long productId);
 }

@@ -9,12 +9,15 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import com.nuclei.productcatalogservice.dto.ProductResponseDto;
 import com.nuclei.productcatalogservice.entity.Product;
+import com.nuclei.productcatalogservice.entity.StockOperation;
 import com.nuclei.productcatalogservice.enums.EntityStatusEnum;
+import com.nuclei.productcatalogservice.enums.StockOperationTypeEnum;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
 import com.nuclei.productcatalogservice.exception.ProductNotFoundException;
 import com.nuclei.productcatalogservice.mapper.ProductMapper;
 import com.nuclei.productcatalogservice.repository.ProductRepository;
+import com.nuclei.productcatalogservice.repository.StockOperationRepository;
 import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -40,6 +43,9 @@ class ProductServiceImplTest {
 
     @Mock
     private ProductMapper productMapper;
+
+    @Mock
+    private StockOperationRepository stockOperationRepository;
 
     @InjectMocks
     private ProductServiceImpl productService;
@@ -106,12 +112,17 @@ class ProductServiceImplTest {
                         15
                 ));
 
-        var response = productService.updateStock(1L, 5);
+        when(stockOperationRepository.findByOperationId("operation-1"))
+                .thenReturn(Optional.empty());
+
+        var response = productService.updateStock(1L, 5, "operation-1");
 
         assertEquals(15, response.stock());
         assertEquals(15, product.getStock());
 
         verify(productRepository).findByIdForUpdate(1L);
+        verify(stockOperationRepository).findByOperationId("operation-1");
+        verify(stockOperationRepository).save(any(StockOperation.class));
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
     }
@@ -131,12 +142,17 @@ class ProductServiceImplTest {
                         6
                 ));
 
-        var response = productService.updateStock(1L, -4);
+        when(stockOperationRepository.findByOperationId("operation-1"))
+                .thenReturn(Optional.empty());
+
+        var response = productService.updateStock(1L, -4,  "operation-1");
 
         assertEquals(6, response.stock());
         assertEquals(6, product.getStock());
 
         verify(productRepository).findByIdForUpdate(1L);
+        verify(stockOperationRepository).findByOperationId("operation-1");
+        verify(stockOperationRepository).save(any(StockOperation.class));
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
     }
@@ -147,7 +163,7 @@ class ProductServiceImplTest {
 
         assertThrows(
                 InvalidStockOperationException.class,
-                () -> productService.updateStock(1L, 0)
+                () -> productService.updateStock(1L, 0,"operation-1")
         );
 
         verifyNoMoreInteractions(productRepository);
@@ -162,11 +178,12 @@ class ProductServiceImplTest {
 
         assertThrows(
                 ProductNotFoundException.class,
-                () -> productService.updateStock(1L, 5)
+                () -> productService.updateStock(1L, 5,  "operation-1")
         );
 
         verify(productRepository).findByIdForUpdate(1L);
         verifyNoMoreInteractions(productRepository);
+        verifyNoMoreInteractions(stockOperationRepository);
     }
 
     @Test
@@ -175,9 +192,12 @@ class ProductServiceImplTest {
 
         when(productRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(product));
 
+        when(stockOperationRepository.findByOperationId("operation-1"))
+                .thenReturn(Optional.empty());
+
         assertThrows(
                 InsufficientStockException.class,
-                () -> productService.updateStock(1L, -11)
+                () -> productService.updateStock(1L, -11, "operation-1")
         );
 
         assertEquals(10, product.getStock());
@@ -201,7 +221,10 @@ class ProductServiceImplTest {
                         15
                 ));
 
-        var response = productService.updateStock(1L, 5);
+        when(stockOperationRepository.findByOperationId("operation-1"))
+                .thenReturn(Optional.empty());
+
+        var response = productService.updateStock(1L, 5, "operation-1");
 
         assertEquals(product.getId(), response.productId());
         assertEquals(product.getName(), response.name());
@@ -209,6 +232,8 @@ class ProductServiceImplTest {
         assertEquals(15, response.stock());
 
         verify(productRepository).findByIdForUpdate(1L);
+        verify(stockOperationRepository).findByOperationId("operation-1");
+        verify(stockOperationRepository).save(any(StockOperation.class));
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
     }
@@ -231,12 +256,17 @@ class ProductServiceImplTest {
                         15
                 ));
 
-        var response = productService.updateStock(1L, 5);
+        when(stockOperationRepository.findByOperationId("operation-1"))
+                .thenReturn(Optional.empty());
+
+        var response = productService.updateStock(1L, 5,  "operation-1");
 
         assertEquals(15, response.stock());
 
         verify(productRepository, org.mockito.Mockito.times(2))
                 .findByIdForUpdate(1L);
+        verify(stockOperationRepository).findByOperationId("operation-1");
+        verify(stockOperationRepository).save(any(StockOperation.class));
         verify(productRepository).save(product);
     }
 
@@ -250,12 +280,247 @@ class ProductServiceImplTest {
 
         assertThrows(
                 RuntimeException.class,
-                () -> productService.updateStock(1L, 5)
+                () -> productService.updateStock(1L, 5, "operation-1")
         );
 
         verify(productRepository).findByIdForUpdate(1L);
         verify(productRepository).save(product);
         verifyNoMoreInteractions(productRepository);
+    }
+
+    @Test
+    void updateStockShouldNotMutateStockWhenOperationAlreadyExists() {
+        StockOperation existingOperation = new StockOperation();
+        existingOperation.setOperationId("operation-1");
+        existingOperation.setProductId(1L);
+        existingOperation.setQuantity(-5);
+        existingOperation.setOperationType(
+                StockOperationTypeEnum.STOCK_UPDATE
+        );
+
+        mockSuccessfulTransaction();
+
+        when(productRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(product));
+
+        when(stockOperationRepository.findByOperationId("operation-1"))
+                .thenReturn(Optional.of(existingOperation));
+
+        when(productMapper.toResponseDto(product))
+                .thenReturn(new ProductResponseDto(
+                        1L,
+                        "Laptop",
+                        new BigDecimal("50000.00"),
+                        10
+                ));
+
+        var response = productService.updateStock(
+                1L,
+                -5,
+                "operation-1"
+        );
+
+        assertEquals(10, response.stock());
+        assertEquals(10, product.getStock());
+
+        verify(productRepository).findByIdForUpdate(1L);
+        verify(stockOperationRepository).findByOperationId("operation-1");
+        verify(productMapper).toResponseDto(product);
+
+        verify(productRepository, org.mockito.Mockito.never())
+                .save(product);
+
+        verify(stockOperationRepository, org.mockito.Mockito.never())
+                .save(any(StockOperation.class));
+    }
+
+    @Test
+    void compensateStockShouldIncreaseStockWhenQuantityIsPositive() {
+        mockSuccessfulTransaction();
+
+        when(productRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(product));
+
+        when(stockOperationRepository.findByOperationId("compensation-1"))
+                .thenReturn(Optional.empty());
+
+        when(productRepository.save(product))
+                .thenReturn(product);
+
+        when(productMapper.toResponseDto(product))
+                .thenReturn(new ProductResponseDto(
+                        1L,
+                        "Laptop",
+                        new BigDecimal("50000.00"),
+                        15
+                ));
+
+        var response = productService.compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        );
+
+        assertEquals(15, response.stock());
+        assertEquals(15, product.getStock());
+
+        verify(productRepository).findByIdForUpdate(1L);
+        verify(stockOperationRepository)
+                .findByOperationId("compensation-1");
+        verify(productRepository).save(product);
+        verify(stockOperationRepository)
+                .save(any(StockOperation.class));
+        verify(productMapper).toResponseDto(product);
+    }
+
+    @Test
+    void compensateStockShouldDecreaseStockWhenQuantityIsNegative() {
+        mockSuccessfulTransaction();
+
+        when(productRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(product));
+
+        when(stockOperationRepository.findByOperationId("compensation-1"))
+                .thenReturn(Optional.empty());
+
+        when(productRepository.save(product))
+                .thenReturn(product);
+
+        when(productMapper.toResponseDto(product))
+                .thenReturn(new ProductResponseDto(
+                        1L,
+                        "Laptop",
+                        new BigDecimal("50000.00"),
+                        6
+                ));
+
+        var response = productService.compensateStock(
+                1L,
+                -4,
+                "compensation-1"
+        );
+
+        assertEquals(6, response.stock());
+        assertEquals(6, product.getStock());
+
+        verify(productRepository).findByIdForUpdate(1L);
+        verify(stockOperationRepository)
+                .findByOperationId("compensation-1");
+        verify(productRepository).save(product);
+        verify(stockOperationRepository)
+                .save(any(StockOperation.class));
+    }
+
+    @Test
+    void compensateStockShouldThrowExceptionWhenQuantityIsZero() {
+        mockSuccessfulTransaction();
+
+        assertThrows(
+                InvalidStockOperationException.class,
+                () -> productService.compensateStock(
+                        1L,
+                        0,
+                        "compensation-1"
+                )
+        );
+
+        verifyNoMoreInteractions(productRepository);
+        verifyNoMoreInteractions(stockOperationRepository);
+    }
+
+    @Test
+    void compensateStockShouldThrowExceptionWhenProductDoesNotExist() {
+        mockSuccessfulTransaction();
+
+        when(productRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.empty());
+
+        assertThrows(
+                ProductNotFoundException.class,
+                () -> productService.compensateStock(
+                        1L,
+                        5,
+                        "compensation-1"
+                )
+        );
+
+        verify(productRepository).findByIdForUpdate(1L);
+        verifyNoMoreInteractions(productRepository);
+        verifyNoMoreInteractions(stockOperationRepository);
+    }
+
+    @Test
+    void compensateStockShouldThrowExceptionWhenStockIsInsufficient() {
+        mockSuccessfulTransaction();
+
+        when(productRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(product));
+
+        when(stockOperationRepository.findByOperationId("compensation-1"))
+                .thenReturn(Optional.empty());
+
+        assertThrows(
+                InsufficientStockException.class,
+                () -> productService.compensateStock(
+                        1L,
+                        -11,
+                        "compensation-1"
+                )
+        );
+
+        assertEquals(10, product.getStock());
+
+        verify(productRepository).findByIdForUpdate(1L);
+        verify(stockOperationRepository)
+                .findByOperationId("compensation-1");
+        verifyNoMoreInteractions(productRepository);
+    }
+
+    @Test
+    void compensateStockShouldNotMutateStockWhenCompensationAlreadyExists() {
+        StockOperation existingOperation = new StockOperation();
+        existingOperation.setOperationId("compensation-1");
+        existingOperation.setProductId(1L);
+        existingOperation.setQuantity(5);
+        existingOperation.setOperationType(
+                StockOperationTypeEnum.COMPENSATION
+        );
+
+        mockSuccessfulTransaction();
+
+        when(productRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(product));
+
+        when(stockOperationRepository.findByOperationId("compensation-1"))
+                .thenReturn(Optional.of(existingOperation));
+
+        when(productMapper.toResponseDto(product))
+                .thenReturn(new ProductResponseDto(
+                        1L,
+                        "Laptop",
+                        new BigDecimal("50000.00"),
+                        10
+                ));
+
+        var response = productService.compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        );
+
+        assertEquals(10, response.stock());
+        assertEquals(10, product.getStock());
+
+        verify(productRepository).findByIdForUpdate(1L);
+        verify(stockOperationRepository)
+                .findByOperationId("compensation-1");
+        verify(productMapper).toResponseDto(product);
+
+        verify(productRepository, org.mockito.Mockito.never())
+                .save(product);
+
+        verify(stockOperationRepository, org.mockito.Mockito.never())
+                .save(any(StockOperation.class));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.nuclei.productcatalogservice.validator;
 
+import com.nuclei.product.proto.CompensateStockRequest;
 import com.nuclei.product.proto.CreateProductRequest;
 import com.nuclei.product.proto.GetProductRequest;
 import com.nuclei.product.proto.UpdateProductRequest;
@@ -22,6 +23,36 @@ public class ProductRequestValidator {
 
     public void validateUpdateStockRequest(final UpdateStockRequest request) {
         validateProductId(request.getProductId());
+
+        if (request.getQuantity() == 0) {
+            throw new InvalidProductRequestException(
+                    "Stock quantity cannot be zero"
+            );
+        }
+
+        if (request.getOperationId().isBlank()) {
+            throw new InvalidProductRequestException(
+                    "Operation ID cannot be empty"
+            );
+        }
+    }
+
+    public void validateCompensateStockRequest(
+            final CompensateStockRequest request) {
+
+        validateProductId(request.getProductId());
+
+        if (request.getQuantity() == 0) {
+            throw new InvalidProductRequestException(
+                    "Stock quantity cannot be zero"
+            );
+        }
+
+        if (request.getCompensationId().isBlank()) {
+            throw new InvalidProductRequestException(
+                    "Compensation ID cannot be empty"
+            );
+        }
     }
 
     public void validateCreateProductRequest(

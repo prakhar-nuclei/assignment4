@@ -6,6 +6,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import com.nuclei.product.proto.CompensateStockRequest;
 import com.nuclei.product.proto.CreateProductRequest;
 import com.nuclei.product.proto.DeleteProductRequest;
 import com.nuclei.product.proto.GetProductRequest;
@@ -473,7 +474,7 @@ class ProductGrpcServiceTest {
                 15
         );
 
-        when(productService.updateStock(1L, 5))
+        when(productService.updateStock(1L, 5, "operation-1"))
                 .thenReturn(product);
 
         ProductResponse productResponse = ProductResponse.newBuilder()
@@ -490,6 +491,7 @@ class ProductGrpcServiceTest {
                 UpdateStockRequest.newBuilder()
                         .setProductId(1L)
                         .setQuantity(5)
+                        .setOperationId("operation-1")
                         .build(),
                 responseObserver
         );
@@ -507,7 +509,7 @@ class ProductGrpcServiceTest {
         assertEquals("50000.00", response.getPrice());
         assertEquals(15, response.getStock());
 
-        verify(productService).updateStock(1L, 5);
+        verify(productService).updateStock(1L, 5, "operation-1");
         verifyNoMoreInteractions(productService);
         verify(productGrpcMapper).toProductResponse(product);
     }
@@ -517,6 +519,7 @@ class ProductGrpcServiceTest {
         UpdateStockRequest request = UpdateStockRequest.newBuilder()
                 .setProductId(0L)
                 .setQuantity(5)
+                .setOperationId("operation-1")
                 .build();
 
         doThrow(new InvalidProductRequestException(
@@ -531,83 +534,87 @@ class ProductGrpcServiceTest {
 
         verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
 
-        verify(productService, never()).updateStock(0L, 5);
+        verify(productService, never()).updateStock(0L, 5, "operation-1");
         verifyNoMoreInteractions(productService);
     }
 
     @Test
     void updateStockShouldReturnInvalidArgumentWhenQuantityIsZero() {
-        when(productService.updateStock(1L, 0))
-                .thenThrow(new InvalidStockOperationException());
+        UpdateStockRequest request = UpdateStockRequest.newBuilder()
+                .setProductId(1L)
+                .setQuantity(0)
+                .setOperationId("operation-1")
+                .build();
 
-        productGrpcService.updateStock(
-                UpdateStockRequest.newBuilder()
-                        .setProductId(1L)
-                        .setQuantity(0)
-                        .build(),
-                responseObserver
-        );
+        doThrow(new InvalidProductRequestException(
+                "Stock quantity cannot be zero"
+        )).when(productRequestValidator)
+                .validateUpdateStockRequest(request);
+
+        productGrpcService.updateStock(request, responseObserver);
 
         verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
 
-        verify(productService).updateStock(1L, 0);
         verifyNoMoreInteractions(productService);
     }
 
     @Test
     void updateStockShouldReturnNotFoundWhenProductDoesNotExist() {
-        when(productService.updateStock(1L, 5))
+        when(productService.updateStock(1L, 5, "operation-1"))
                 .thenThrow(new ProductNotFoundException(1L));
 
         productGrpcService.updateStock(
                 UpdateStockRequest.newBuilder()
                         .setProductId(1L)
                         .setQuantity(5)
+                        .setOperationId("operation-1")
                         .build(),
                 responseObserver
         );
 
         verifyErrorStatus(Status.Code.NOT_FOUND);
 
-        verify(productService).updateStock(1L, 5);
+        verify(productService).updateStock(1L, 5, "operation-1");
         verifyNoMoreInteractions(productService);
     }
 
     @Test
     void updateStockShouldReturnFailedPreconditionWhenStockIsInsufficient() {
-        when(productService.updateStock(1L, -15))
+        when(productService.updateStock(1L, -15, "operation-1"))
                 .thenThrow(new InsufficientStockException(1L, -15));
 
         productGrpcService.updateStock(
                 UpdateStockRequest.newBuilder()
                         .setProductId(1L)
                         .setQuantity(-15)
+                        .setOperationId("operation-1")
                         .build(),
                 responseObserver
         );
 
         verifyErrorStatus(Status.Code.FAILED_PRECONDITION);
 
-        verify(productService).updateStock(1L, -15);
+        verify(productService).updateStock(1L, -15, "operation-1");
         verifyNoMoreInteractions(productService);
     }
 
     @Test
     void updateStockShouldReturnAbortedWhenConcurrencyConflictOccurs() {
-        when(productService.updateStock(1L, -5))
+        when(productService.updateStock(1L, -5, "operation-1"))
                 .thenThrow(new ProductConcurrencyException(1L));
 
         productGrpcService.updateStock(
                 UpdateStockRequest.newBuilder()
                         .setProductId(1L)
                         .setQuantity(-5)
+                        .setOperationId("operation-1")
                         .build(),
                 responseObserver
         );
 
         verifyErrorStatus(Status.Code.ABORTED);
 
-        verify(productService).updateStock(1L, -5);
+        verify(productService).updateStock(1L, -5, "operation-1");
         verifyNoMoreInteractions(productService);
     }
 
@@ -649,6 +656,300 @@ class ProductGrpcServiceTest {
         verify(productService).getProduct(1L);
         verifyNoMoreInteractions(productService);
         verify(productGrpcMapper).toProductResponse(product);
+    }
+
+    @Test
+    void updateStockShouldReturnInvalidArgumentWhenOperationIdIsMissing() {
+        UpdateStockRequest request = UpdateStockRequest.newBuilder()
+                .setProductId(1L)
+                .setQuantity(5)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Operation ID cannot be empty"
+        )).when(productRequestValidator)
+                .validateUpdateStockRequest(request);
+
+        productGrpcService.updateStock(request, responseObserver);
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void updateStockShouldReturnInternalWhenUnexpectedExceptionOccurs() {
+        when(productService.updateStock(1L, 5, "operation-1"))
+                .thenThrow(new RuntimeException("Unexpected failure"));
+
+        productGrpcService.updateStock(
+                UpdateStockRequest.newBuilder()
+                        .setProductId(1L)
+                        .setQuantity(5)
+                        .setOperationId("operation-1")
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.INTERNAL);
+
+        verify(productService).updateStock(
+                1L,
+                5,
+                "operation-1"
+        );
+    }
+
+    @Test
+    void compensateStockShouldReturnMappedResponseWhenStockIsCompensated() {
+        ProductResponseDto product = new ProductResponseDto(
+                1L,
+                "Laptop",
+                new BigDecimal("50000.00"),
+                15
+        );
+
+        ProductResponse productResponse = ProductResponse.newBuilder()
+                .setProductId(1L)
+                .setName("Laptop")
+                .setPrice("50000.00")
+                .setStock(15)
+                .build();
+
+        when(productService.compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        )).thenReturn(product);
+
+        when(productGrpcMapper.toProductResponse(product))
+                .thenReturn(productResponse);
+
+        productGrpcService.compensateStock(
+                CompensateStockRequest.newBuilder()
+                        .setProductId(1L)
+                        .setQuantity(5)
+                        .setCompensationId("compensation-1")
+                        .build(),
+                responseObserver
+        );
+
+        var responseCaptor =
+                org.mockito.ArgumentCaptor.forClass(ProductResponse.class);
+
+        verify(responseObserver).onNext(responseCaptor.capture());
+        verify(responseObserver).onCompleted();
+
+        ProductResponse response = responseCaptor.getValue();
+
+        assertEquals(1L, response.getProductId());
+        assertEquals("Laptop", response.getName());
+        assertEquals("50000.00", response.getPrice());
+        assertEquals(15, response.getStock());
+
+        verify(productService).compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        );
+        verify(productGrpcMapper).toProductResponse(product);
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void compensateStockShouldReturnInvalidArgumentWhenProductIdIsInvalid() {
+        CompensateStockRequest request = CompensateStockRequest.newBuilder()
+                .setProductId(0L)
+                .setQuantity(5)
+                .setCompensationId("compensation-1")
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Product ID must be greater than zero"
+        )).when(productRequestValidator)
+                .validateCompensateStockRequest(request);
+
+        productGrpcService.compensateStock(
+                request,
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
+
+        verify(productService, never()).compensateStock(
+                0L,
+                5,
+                "compensation-1"
+        );
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void compensateStockShouldReturnInvalidArgumentWhenCompensationIdIsMissing() {
+        CompensateStockRequest request = CompensateStockRequest.newBuilder()
+                .setProductId(1L)
+                .setQuantity(5)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Compensation ID cannot be empty"
+        )).when(productRequestValidator)
+                .validateCompensateStockRequest(request);
+
+        productGrpcService.compensateStock(
+                request,
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
+
+        verify(productService, never()).compensateStock(
+                1L,
+                5,
+                ""
+        );
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void compensateStockShouldReturnInvalidArgumentWhenQuantityIsZero() {
+        CompensateStockRequest request = CompensateStockRequest.newBuilder()
+                .setProductId(1L)
+                .setQuantity(0)
+                .setCompensationId("compensation-1")
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Stock quantity cannot be zero"
+        )).when(productRequestValidator)
+                .validateCompensateStockRequest(request);
+
+        productGrpcService.compensateStock(
+                request,
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
+
+        verify(productService, never()).compensateStock(
+                1L,
+                0,
+                "compensation-1"
+        );
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void compensateStockShouldReturnNotFoundWhenProductDoesNotExist() {
+        when(productService.compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        )).thenThrow(new ProductNotFoundException(1L));
+
+        productGrpcService.compensateStock(
+                CompensateStockRequest.newBuilder()
+                        .setProductId(1L)
+                        .setQuantity(5)
+                        .setCompensationId("compensation-1")
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.NOT_FOUND);
+
+        verify(productService).compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        );
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void compensateStockShouldReturnFailedPreconditionWhenStockIsInsufficient() {
+        when(productService.compensateStock(
+                1L,
+                -15,
+                "compensation-1"
+        )).thenThrow(new InsufficientStockException(1L, -15));
+
+        productGrpcService.compensateStock(
+                CompensateStockRequest.newBuilder()
+                        .setProductId(1L)
+                        .setQuantity(-15)
+                        .setCompensationId("compensation-1")
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.FAILED_PRECONDITION);
+
+        verify(productService).compensateStock(
+                1L,
+                -15,
+                "compensation-1"
+        );
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void compensateStockShouldReturnAbortedWhenConcurrencyConflictOccurs() {
+        when(productService.compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        )).thenThrow(new ProductConcurrencyException(1L));
+
+        productGrpcService.compensateStock(
+                CompensateStockRequest.newBuilder()
+                        .setProductId(1L)
+                        .setQuantity(5)
+                        .setCompensationId("compensation-1")
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.ABORTED);
+
+        verify(productService).compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        );
+
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void compensateStockShouldReturnInternalWhenUnexpectedExceptionOccurs() {
+        when(productService.compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        )).thenThrow(new RuntimeException("Unexpected failure"));
+
+        productGrpcService.compensateStock(
+                CompensateStockRequest.newBuilder()
+                        .setProductId(1L)
+                        .setQuantity(5)
+                        .setCompensationId("compensation-1")
+                        .build(),
+                responseObserver
+        );
+
+        verifyErrorStatus(Status.Code.INTERNAL);
+
+        verify(productService).compensateStock(
+                1L,
+                5,
+                "compensation-1"
+        );
     }
 
     @SuppressWarnings("unchecked")

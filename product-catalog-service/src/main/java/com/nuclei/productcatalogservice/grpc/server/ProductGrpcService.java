@@ -1,5 +1,6 @@
 package com.nuclei.productcatalogservice.grpc.server;
 
+import com.nuclei.product.proto.CompensateStockRequest;
 import com.nuclei.product.proto.CreateProductRequest;
 import com.nuclei.product.proto.DeleteProductRequest;
 import com.nuclei.product.proto.GetProductRequest;
@@ -210,7 +211,8 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
            final ProductResponseDto product =
                     productService.updateStock(
                             request.getProductId(),
-                            request.getQuantity()
+                            request.getQuantity(),
+                            request.getOperationId()
                     );
 
             responseObserver.onNext(productGrpcMapper.toProductResponse(product));
@@ -220,6 +222,60 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
                 responseObserver,
                 Status.INVALID_ARGUMENT,
                 exception.getMessage()
+            );
+        } catch (ProductNotFoundException exception) {
+            sendError(
+                    responseObserver,
+                    Status.NOT_FOUND,
+                    exception.getMessage()
+            );
+        } catch (InsufficientStockException exception) {
+            sendError(
+                    responseObserver,
+                    Status.FAILED_PRECONDITION,
+                    exception.getMessage()
+            );
+        } catch (ProductConcurrencyException exception) {
+            sendError(
+                    responseObserver,
+                    Status.ABORTED,
+                    exception.getMessage()
+            );
+        } catch (Exception exception) {
+            sendError(
+                    responseObserver,
+                    Status.INTERNAL,
+                    INTERNAL_SERVER_ERROR
+            );
+        }
+    }
+
+    @Override
+    public void compensateStock(
+            final CompensateStockRequest request,
+            final StreamObserver<ProductResponse> responseObserver) {
+
+        try {
+            productRequestValidator.validateCompensateStockRequest(request);
+
+            final ProductResponseDto product =
+                    productService.compensateStock(
+                            request.getProductId(),
+                            request.getQuantity(),
+                            request.getCompensationId()
+                    );
+
+            responseObserver.onNext(
+                    productGrpcMapper.toProductResponse(product)
+            );
+            responseObserver.onCompleted();
+
+        } catch (InvalidProductRequestException
+                 | InvalidStockOperationException exception) {
+            sendError(
+                    responseObserver,
+                    Status.INVALID_ARGUMENT,
+                    exception.getMessage()
             );
         } catch (ProductNotFoundException exception) {
             sendError(
