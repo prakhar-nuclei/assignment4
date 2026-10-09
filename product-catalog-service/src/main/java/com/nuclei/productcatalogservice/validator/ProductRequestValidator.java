@@ -3,6 +3,7 @@ package com.nuclei.productcatalogservice.validator;
 import com.nuclei.product.proto.CompensateStockRequest;
 import com.nuclei.product.proto.CreateProductRequest;
 import com.nuclei.product.proto.GetProductRequest;
+import com.nuclei.product.proto.StockOperationDirection;
 import com.nuclei.product.proto.UpdateProductRequest;
 import com.nuclei.product.proto.UpdateStockRequest;
 import com.nuclei.productcatalogservice.exception.InvalidProductRequestException;
@@ -24,9 +25,9 @@ public class ProductRequestValidator {
     public void validateUpdateStockRequest(final UpdateStockRequest request) {
         validateProductId(request.getProductId());
 
-        if (request.getQuantity() == 0) {
+        if (request.getQuantity() <= 0) {
             throw new InvalidProductRequestException(
-                    "Stock quantity cannot be zero"
+                    "Stock quantity must be greater than zero"
             );
         }
 
@@ -35,6 +36,8 @@ public class ProductRequestValidator {
                     "Operation ID cannot be empty"
             );
         }
+
+        validateStockDirection(request.getDirection());
     }
 
     public void validateCompensateStockRequest(
@@ -42,9 +45,9 @@ public class ProductRequestValidator {
 
         validateProductId(request.getProductId());
 
-        if (request.getQuantity() == 0) {
+        if (request.getQuantity() <= 0) {
             throw new InvalidProductRequestException(
-                    "Stock quantity cannot be zero"
+                    "Stock quantity must be greater than zero"
             );
         }
 
@@ -53,6 +56,8 @@ public class ProductRequestValidator {
                     "Compensation ID cannot be empty"
             );
         }
+
+        validateStockDirection(request.getDirection());
     }
 
     public void validateCreateProductRequest(
@@ -115,6 +120,17 @@ public class ProductRequestValidator {
         if (request.getStock() < 0) {
             throw new InvalidProductRequestException(
                     "Stock cannot be negative"
+            );
+        }
+    }
+
+    private void validateStockDirection(
+            final StockOperationDirection direction) {
+
+        if (direction == StockOperationDirection.STOCK_OPERATION_DIRECTION_UNSPECIFIED
+                || direction == StockOperationDirection.UNRECOGNIZED) {
+            throw new InvalidProductRequestException(
+                    "Stock operation direction must be specified"
             );
         }
     }

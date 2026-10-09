@@ -11,9 +11,11 @@ import com.nuclei.product.proto.CreateProductRequest;
 import com.nuclei.product.proto.DeleteProductRequest;
 import com.nuclei.product.proto.GetProductRequest;
 import com.nuclei.product.proto.ProductResponse;
+import com.nuclei.product.proto.StockOperationDirection;
 import com.nuclei.product.proto.UpdateProductRequest;
 import com.nuclei.product.proto.UpdateStockRequest;
 import com.nuclei.productcatalogservice.dto.ProductResponseDto;
+import com.nuclei.productcatalogservice.enums.StockOperationDirectionEnum;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
 import com.nuclei.productcatalogservice.exception.InvalidProductRequestException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
@@ -474,8 +476,12 @@ class ProductGrpcServiceTest {
                 15
         );
 
-        when(productService.updateStock(1L, 5, "operation-1"))
-                .thenReturn(product);
+        when(productService.updateStock(
+                1L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
+        )).thenReturn(product);
 
         ProductResponse productResponse = ProductResponse.newBuilder()
                 .setProductId(1L)
@@ -492,6 +498,7 @@ class ProductGrpcServiceTest {
                         .setProductId(1L)
                         .setQuantity(5)
                         .setOperationId("operation-1")
+                        .setDirection(StockOperationDirection.INCREASE)
                         .build(),
                 responseObserver
         );
@@ -509,7 +516,12 @@ class ProductGrpcServiceTest {
         assertEquals("50000.00", response.getPrice());
         assertEquals(15, response.getStock());
 
-        verify(productService).updateStock(1L, 5, "operation-1");
+        verify(productService).updateStock(
+                1L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
+        );
         verifyNoMoreInteractions(productService);
         verify(productGrpcMapper).toProductResponse(product);
     }
@@ -520,6 +532,7 @@ class ProductGrpcServiceTest {
                 .setProductId(0L)
                 .setQuantity(5)
                 .setOperationId("operation-1")
+                .setDirection(StockOperationDirection.INCREASE)
                 .build();
 
         doThrow(new InvalidProductRequestException(
@@ -533,8 +546,12 @@ class ProductGrpcServiceTest {
         );
 
         verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
-
-        verify(productService, never()).updateStock(0L, 5, "operation-1");
+        verify(productService, never()).updateStock(
+                0L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
+        );
         verifyNoMoreInteractions(productService);
     }
 
@@ -544,10 +561,11 @@ class ProductGrpcServiceTest {
                 .setProductId(1L)
                 .setQuantity(0)
                 .setOperationId("operation-1")
+                .setDirection(StockOperationDirection.INCREASE)
                 .build();
 
         doThrow(new InvalidProductRequestException(
-                "Stock quantity cannot be zero"
+                "Stock quantity must be greater than zero"
         )).when(productRequestValidator)
                 .validateUpdateStockRequest(request);
 
@@ -559,62 +577,112 @@ class ProductGrpcServiceTest {
     }
 
     @Test
+    void updateStockShouldReturnInvalidArgumentWhenQuantityIsNegative() {
+        UpdateStockRequest request = UpdateStockRequest.newBuilder()
+                .setProductId(1L)
+                .setQuantity(-5)
+                .setOperationId("operation-negative")
+                .setDirection(StockOperationDirection.INCREASE)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Stock quantity must be greater than zero"
+        )).when(productRequestValidator)
+                .validateUpdateStockRequest(request);
+
+        productGrpcService.updateStock(request, responseObserver);
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
     void updateStockShouldReturnNotFoundWhenProductDoesNotExist() {
-        when(productService.updateStock(1L, 5, "operation-1"))
-                .thenThrow(new ProductNotFoundException(1L));
+        when(productService.updateStock(
+                1L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
+        )).thenThrow(new ProductNotFoundException(1L));
 
         productGrpcService.updateStock(
                 UpdateStockRequest.newBuilder()
                         .setProductId(1L)
                         .setQuantity(5)
                         .setOperationId("operation-1")
+                        .setDirection(StockOperationDirection.INCREASE)
                         .build(),
                 responseObserver
         );
 
         verifyErrorStatus(Status.Code.NOT_FOUND);
 
-        verify(productService).updateStock(1L, 5, "operation-1");
+        verify(productService).updateStock(
+                1L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
+        );
         verifyNoMoreInteractions(productService);
     }
 
     @Test
     void updateStockShouldReturnFailedPreconditionWhenStockIsInsufficient() {
-        when(productService.updateStock(1L, -15, "operation-1"))
-                .thenThrow(new InsufficientStockException(1L, -15));
+        when(productService.updateStock(
+                1L,
+                15,
+                "operation-1",
+                StockOperationDirectionEnum.DECREASE
+        )).thenThrow(new InsufficientStockException(1L, 15));
 
         productGrpcService.updateStock(
                 UpdateStockRequest.newBuilder()
                         .setProductId(1L)
-                        .setQuantity(-15)
+                        .setQuantity(15)
                         .setOperationId("operation-1")
+                        .setDirection(StockOperationDirection.DECREASE)
                         .build(),
                 responseObserver
         );
 
         verifyErrorStatus(Status.Code.FAILED_PRECONDITION);
 
-        verify(productService).updateStock(1L, -15, "operation-1");
+        verify(productService).updateStock(
+                1L,
+                15,
+                "operation-1",
+                StockOperationDirectionEnum.DECREASE
+        );
         verifyNoMoreInteractions(productService);
     }
 
     @Test
     void updateStockShouldReturnAbortedWhenConcurrencyConflictOccurs() {
-        when(productService.updateStock(1L, -5, "operation-1"))
-                .thenThrow(new ProductConcurrencyException(1L));
+        when(productService.updateStock(
+                1L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.DECREASE
+        )).thenThrow(new ProductConcurrencyException(1L));
 
         productGrpcService.updateStock(
                 UpdateStockRequest.newBuilder()
                         .setProductId(1L)
-                        .setQuantity(-5)
+                        .setQuantity(5)
                         .setOperationId("operation-1")
+                        .setDirection(StockOperationDirection.DECREASE)
                         .build(),
                 responseObserver
         );
 
         verifyErrorStatus(Status.Code.ABORTED);
 
-        verify(productService).updateStock(1L, -5, "operation-1");
+        verify(productService).updateStock(
+                1L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.DECREASE
+        );
         verifyNoMoreInteractions(productService);
     }
 
@@ -663,6 +731,7 @@ class ProductGrpcServiceTest {
         UpdateStockRequest request = UpdateStockRequest.newBuilder()
                 .setProductId(1L)
                 .setQuantity(5)
+                .setDirection(StockOperationDirection.INCREASE)
                 .build();
 
         doThrow(new InvalidProductRequestException(
@@ -679,14 +748,19 @@ class ProductGrpcServiceTest {
 
     @Test
     void updateStockShouldReturnInternalWhenUnexpectedExceptionOccurs() {
-        when(productService.updateStock(1L, 5, "operation-1"))
-                .thenThrow(new RuntimeException("Unexpected failure"));
+        when(productService.updateStock(
+                1L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
+        )).thenThrow(new RuntimeException("Unexpected failure"));
 
         productGrpcService.updateStock(
                 UpdateStockRequest.newBuilder()
                         .setProductId(1L)
                         .setQuantity(5)
                         .setOperationId("operation-1")
+                        .setDirection(StockOperationDirection.INCREASE)
                         .build(),
                 responseObserver
         );
@@ -696,7 +770,8 @@ class ProductGrpcServiceTest {
         verify(productService).updateStock(
                 1L,
                 5,
-                "operation-1"
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
         );
     }
 
@@ -719,7 +794,8 @@ class ProductGrpcServiceTest {
         when(productService.compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         )).thenReturn(product);
 
         when(productGrpcMapper.toProductResponse(product))
@@ -730,6 +806,7 @@ class ProductGrpcServiceTest {
                         .setProductId(1L)
                         .setQuantity(5)
                         .setCompensationId("compensation-1")
+                        .setDirection(StockOperationDirection.INCREASE)
                         .build(),
                 responseObserver
         );
@@ -750,7 +827,8 @@ class ProductGrpcServiceTest {
         verify(productService).compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         );
         verify(productGrpcMapper).toProductResponse(product);
         verifyNoMoreInteractions(productService);
@@ -762,6 +840,7 @@ class ProductGrpcServiceTest {
                 .setProductId(0L)
                 .setQuantity(5)
                 .setCompensationId("compensation-1")
+                .setDirection(StockOperationDirection.INCREASE)
                 .build();
 
         doThrow(new InvalidProductRequestException(
@@ -779,7 +858,8 @@ class ProductGrpcServiceTest {
         verify(productService, never()).compensateStock(
                 0L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         );
 
         verifyNoMoreInteractions(productService);
@@ -790,6 +870,7 @@ class ProductGrpcServiceTest {
         CompensateStockRequest request = CompensateStockRequest.newBuilder()
                 .setProductId(1L)
                 .setQuantity(5)
+                .setDirection(StockOperationDirection.INCREASE)
                 .build();
 
         doThrow(new InvalidProductRequestException(
@@ -807,7 +888,8 @@ class ProductGrpcServiceTest {
         verify(productService, never()).compensateStock(
                 1L,
                 5,
-                ""
+                "",
+                StockOperationDirectionEnum.INCREASE
         );
 
         verifyNoMoreInteractions(productService);
@@ -819,10 +901,11 @@ class ProductGrpcServiceTest {
                 .setProductId(1L)
                 .setQuantity(0)
                 .setCompensationId("compensation-1")
+                .setDirection(StockOperationDirection.INCREASE)
                 .build();
 
         doThrow(new InvalidProductRequestException(
-                "Stock quantity cannot be zero"
+                "Stock quantity must be greater than zero"
         )).when(productRequestValidator)
                 .validateCompensateStockRequest(request);
 
@@ -836,9 +919,30 @@ class ProductGrpcServiceTest {
         verify(productService, never()).compensateStock(
                 1L,
                 0,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         );
 
+        verifyNoMoreInteractions(productService);
+    }
+
+    @Test
+    void compensateStockShouldReturnInvalidArgumentWhenQuantityIsNegative() {
+        CompensateStockRequest request = CompensateStockRequest.newBuilder()
+                .setProductId(1L)
+                .setQuantity(-5)
+                .setCompensationId("compensation-negative")
+                .setDirection(StockOperationDirection.INCREASE)
+                .build();
+
+        doThrow(new InvalidProductRequestException(
+                "Stock quantity must be greater than zero"
+        )).when(productRequestValidator)
+                .validateCompensateStockRequest(request);
+
+        productGrpcService.compensateStock(request, responseObserver);
+
+        verifyErrorStatus(Status.Code.INVALID_ARGUMENT);
         verifyNoMoreInteractions(productService);
     }
 
@@ -847,7 +951,8 @@ class ProductGrpcServiceTest {
         when(productService.compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         )).thenThrow(new ProductNotFoundException(1L));
 
         productGrpcService.compensateStock(
@@ -855,6 +960,7 @@ class ProductGrpcServiceTest {
                         .setProductId(1L)
                         .setQuantity(5)
                         .setCompensationId("compensation-1")
+                        .setDirection(StockOperationDirection.INCREASE)
                         .build(),
                 responseObserver
         );
@@ -864,7 +970,8 @@ class ProductGrpcServiceTest {
         verify(productService).compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         );
 
         verifyNoMoreInteractions(productService);
@@ -874,15 +981,17 @@ class ProductGrpcServiceTest {
     void compensateStockShouldReturnFailedPreconditionWhenStockIsInsufficient() {
         when(productService.compensateStock(
                 1L,
-                -15,
-                "compensation-1"
-        )).thenThrow(new InsufficientStockException(1L, -15));
+                15,
+                "compensation-1",
+                StockOperationDirectionEnum.DECREASE
+        )).thenThrow(new InsufficientStockException(1L, 15));
 
         productGrpcService.compensateStock(
                 CompensateStockRequest.newBuilder()
                         .setProductId(1L)
-                        .setQuantity(-15)
+                        .setQuantity(15)
                         .setCompensationId("compensation-1")
+                        .setDirection(StockOperationDirection.DECREASE)
                         .build(),
                 responseObserver
         );
@@ -891,8 +1000,9 @@ class ProductGrpcServiceTest {
 
         verify(productService).compensateStock(
                 1L,
-                -15,
-                "compensation-1"
+                15,
+                "compensation-1",
+                StockOperationDirectionEnum.DECREASE
         );
 
         verifyNoMoreInteractions(productService);
@@ -903,7 +1013,8 @@ class ProductGrpcServiceTest {
         when(productService.compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         )).thenThrow(new ProductConcurrencyException(1L));
 
         productGrpcService.compensateStock(
@@ -911,6 +1022,7 @@ class ProductGrpcServiceTest {
                         .setProductId(1L)
                         .setQuantity(5)
                         .setCompensationId("compensation-1")
+                        .setDirection(StockOperationDirection.INCREASE)
                         .build(),
                 responseObserver
         );
@@ -920,7 +1032,8 @@ class ProductGrpcServiceTest {
         verify(productService).compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         );
 
         verifyNoMoreInteractions(productService);
@@ -931,7 +1044,8 @@ class ProductGrpcServiceTest {
         when(productService.compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         )).thenThrow(new RuntimeException("Unexpected failure"));
 
         productGrpcService.compensateStock(
@@ -939,6 +1053,7 @@ class ProductGrpcServiceTest {
                         .setProductId(1L)
                         .setQuantity(5)
                         .setCompensationId("compensation-1")
+                        .setDirection(StockOperationDirection.INCREASE)
                         .build(),
                 responseObserver
         );
@@ -948,7 +1063,8 @@ class ProductGrpcServiceTest {
         verify(productService).compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         );
     }
 

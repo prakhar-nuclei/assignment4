@@ -11,6 +11,7 @@ import com.nuclei.productcatalogservice.dto.ProductResponseDto;
 import com.nuclei.productcatalogservice.entity.Product;
 import com.nuclei.productcatalogservice.entity.StockOperation;
 import com.nuclei.productcatalogservice.enums.EntityStatusEnum;
+import com.nuclei.productcatalogservice.enums.StockOperationDirectionEnum;
 import com.nuclei.productcatalogservice.enums.StockOperationTypeEnum;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
@@ -115,7 +116,12 @@ class ProductServiceImplTest {
         when(stockOperationRepository.findByOperationId("operation-1"))
                 .thenReturn(Optional.empty());
 
-        var response = productService.updateStock(1L, 5, "operation-1");
+        var response = productService.updateStock(
+                1L,
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
+        );
 
         assertEquals(15, response.stock());
         assertEquals(15, product.getStock());
@@ -145,8 +151,12 @@ class ProductServiceImplTest {
         when(stockOperationRepository.findByOperationId("operation-1"))
                 .thenReturn(Optional.empty());
 
-        var response = productService.updateStock(1L, -4,  "operation-1");
-
+        var response = productService.updateStock(
+                1L,
+                4,
+                "operation-1",
+                StockOperationDirectionEnum.DECREASE
+        );
         assertEquals(6, response.stock());
         assertEquals(6, product.getStock());
 
@@ -158,12 +168,32 @@ class ProductServiceImplTest {
     }
 
     @Test
+    void updateStockShouldThrowExceptionWhenQuantityIsNegative() {
+        assertThrows(
+                InvalidStockOperationException.class,
+                () -> productService.updateStock(
+                        1L,
+                        -5,
+                        "operation-negative",
+                        StockOperationDirectionEnum.INCREASE
+                )
+        );
+
+        verifyNoMoreInteractions(productRepository);
+        verifyNoMoreInteractions(stockOperationRepository);
+    }
+
+    @Test
     void updateStockShouldThrowExceptionWhenQuantityIsZero() {
-        mockSuccessfulTransaction();
 
         assertThrows(
                 InvalidStockOperationException.class,
-                () -> productService.updateStock(1L, 0,"operation-1")
+                () -> productService.updateStock(
+                        1L,
+                        0,
+                        "operation-1",
+                        StockOperationDirectionEnum.INCREASE
+                )
         );
 
         verifyNoMoreInteractions(productRepository);
@@ -178,7 +208,12 @@ class ProductServiceImplTest {
 
         assertThrows(
                 ProductNotFoundException.class,
-                () -> productService.updateStock(1L, 5,  "operation-1")
+                () -> productService.updateStock(
+                        1L,
+                        5,
+                        "operation-1",
+                        StockOperationDirectionEnum.INCREASE
+                )
         );
 
         verify(productRepository).findByIdForUpdate(1L);
@@ -197,7 +232,12 @@ class ProductServiceImplTest {
 
         assertThrows(
                 InsufficientStockException.class,
-                () -> productService.updateStock(1L, -11, "operation-1")
+                () -> productService.updateStock(
+                        1L,
+                        11,
+                        "operation-1",
+                        StockOperationDirectionEnum.DECREASE
+                )
         );
 
         assertEquals(10, product.getStock());
@@ -224,7 +264,7 @@ class ProductServiceImplTest {
         when(stockOperationRepository.findByOperationId("operation-1"))
                 .thenReturn(Optional.empty());
 
-        var response = productService.updateStock(1L, 5, "operation-1");
+        var response = productService.updateStock(1L, 5, "operation-1", StockOperationDirectionEnum.INCREASE);
 
         assertEquals(product.getId(), response.productId());
         assertEquals(product.getName(), response.name());
@@ -259,7 +299,7 @@ class ProductServiceImplTest {
         when(stockOperationRepository.findByOperationId("operation-1"))
                 .thenReturn(Optional.empty());
 
-        var response = productService.updateStock(1L, 5,  "operation-1");
+        var response = productService.updateStock(1L, 5,  "operation-1", StockOperationDirectionEnum.INCREASE);
 
         assertEquals(15, response.stock());
 
@@ -280,7 +320,7 @@ class ProductServiceImplTest {
 
         assertThrows(
                 RuntimeException.class,
-                () -> productService.updateStock(1L, 5, "operation-1")
+                () -> productService.updateStock(1L, 5, "operation-1", StockOperationDirectionEnum.INCREASE)
         );
 
         verify(productRepository).findByIdForUpdate(1L);
@@ -293,7 +333,8 @@ class ProductServiceImplTest {
         StockOperation existingOperation = new StockOperation();
         existingOperation.setOperationId("operation-1");
         existingOperation.setProductId(1L);
-        existingOperation.setQuantity(-5);
+        existingOperation.setQuantity(5);
+        existingOperation.setDirection(StockOperationDirectionEnum.INCREASE);
         existingOperation.setOperationType(
                 StockOperationTypeEnum.STOCK_UPDATE
         );
@@ -316,8 +357,9 @@ class ProductServiceImplTest {
 
         var response = productService.updateStock(
                 1L,
-                -5,
-                "operation-1"
+                5,
+                "operation-1",
+                StockOperationDirectionEnum.INCREASE
         );
 
         assertEquals(10, response.stock());
@@ -358,7 +400,8 @@ class ProductServiceImplTest {
         var response = productService.compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         );
 
         assertEquals(15, response.stock());
@@ -396,8 +439,9 @@ class ProductServiceImplTest {
 
         var response = productService.compensateStock(
                 1L,
-                -4,
-                "compensation-1"
+                4,
+                "compensation-1",
+                StockOperationDirectionEnum.DECREASE
         );
 
         assertEquals(6, response.stock());
@@ -412,15 +456,31 @@ class ProductServiceImplTest {
     }
 
     @Test
+    void compensateStockShouldThrowExceptionWhenQuantityIsNegative() {
+        assertThrows(
+                InvalidStockOperationException.class,
+                () -> productService.compensateStock(
+                        1L,
+                        -5,
+                        "compensation-negative",
+                        StockOperationDirectionEnum.INCREASE
+                )
+        );
+
+        verifyNoMoreInteractions(productRepository);
+        verifyNoMoreInteractions(stockOperationRepository);
+    }
+
+    @Test
     void compensateStockShouldThrowExceptionWhenQuantityIsZero() {
-        mockSuccessfulTransaction();
 
         assertThrows(
                 InvalidStockOperationException.class,
                 () -> productService.compensateStock(
                         1L,
                         0,
-                        "compensation-1"
+                        "compensation-1",
+                        StockOperationDirectionEnum.INCREASE
                 )
         );
 
@@ -440,7 +500,8 @@ class ProductServiceImplTest {
                 () -> productService.compensateStock(
                         1L,
                         5,
-                        "compensation-1"
+                        "compensation-1",
+                        StockOperationDirectionEnum.INCREASE
                 )
         );
 
@@ -463,8 +524,9 @@ class ProductServiceImplTest {
                 InsufficientStockException.class,
                 () -> productService.compensateStock(
                         1L,
-                        -11,
-                        "compensation-1"
+                        11,
+                        "compensation-1",
+                        StockOperationDirectionEnum.DECREASE
                 )
         );
 
@@ -482,6 +544,7 @@ class ProductServiceImplTest {
         existingOperation.setOperationId("compensation-1");
         existingOperation.setProductId(1L);
         existingOperation.setQuantity(5);
+        existingOperation.setDirection(StockOperationDirectionEnum.INCREASE);
         existingOperation.setOperationType(
                 StockOperationTypeEnum.COMPENSATION
         );
@@ -505,7 +568,8 @@ class ProductServiceImplTest {
         var response = productService.compensateStock(
                 1L,
                 5,
-                "compensation-1"
+                "compensation-1",
+                StockOperationDirectionEnum.INCREASE
         );
 
         assertEquals(10, response.stock());

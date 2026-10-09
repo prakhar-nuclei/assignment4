@@ -6,9 +6,11 @@ import com.nuclei.product.proto.DeleteProductRequest;
 import com.nuclei.product.proto.GetProductRequest;
 import com.nuclei.product.proto.ProductResponse;
 import com.nuclei.product.proto.ProductServiceGrpc;
+import com.nuclei.product.proto.StockOperationDirection;
 import com.nuclei.product.proto.UpdateProductRequest;
 import com.nuclei.product.proto.UpdateStockRequest;
 import com.nuclei.productcatalogservice.dto.ProductResponseDto;
+import com.nuclei.productcatalogservice.enums.StockOperationDirectionEnum;
 import com.nuclei.productcatalogservice.exception.InsufficientStockException;
 import com.nuclei.productcatalogservice.exception.InvalidProductRequestException;
 import com.nuclei.productcatalogservice.exception.InvalidStockOperationException;
@@ -209,11 +211,12 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
             productRequestValidator.validateUpdateStockRequest(request);
 
            final ProductResponseDto product =
-                    productService.updateStock(
-                            request.getProductId(),
-                            request.getQuantity(),
-                            request.getOperationId()
-                    );
+                   productService.updateStock(
+                           request.getProductId(),
+                           request.getQuantity(),
+                           request.getOperationId(),
+                           mapDirection(request.getDirection())
+                   );
 
             responseObserver.onNext(productGrpcMapper.toProductResponse(product));
             responseObserver.onCompleted();
@@ -262,7 +265,8 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
                     productService.compensateStock(
                             request.getProductId(),
                             request.getQuantity(),
-                            request.getCompensationId()
+                            request.getCompensationId(),
+                            mapDirection(request.getDirection())
                     );
 
             responseObserver.onNext(
@@ -302,6 +306,17 @@ public class ProductGrpcService extends ProductServiceGrpc.ProductServiceImplBas
                     INTERNAL_SERVER_ERROR
             );
         }
+    }
+
+    private StockOperationDirectionEnum mapDirection(
+            final StockOperationDirection direction) {
+
+        return switch (direction) {
+            case INCREASE -> StockOperationDirectionEnum.INCREASE;
+            case DECREASE -> StockOperationDirectionEnum.DECREASE;
+            case STOCK_OPERATION_DIRECTION_UNSPECIFIED,
+                 UNRECOGNIZED -> throw new InvalidStockOperationException();
+        };
     }
 
     private <T> void sendError(

@@ -1,5 +1,6 @@
 package com.nuclei.productcatalogservice.entity;
 
+import com.nuclei.productcatalogservice.enums.StockOperationDirectionEnum;
 import com.nuclei.productcatalogservice.enums.StockOperationTypeEnum;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -38,4 +39,8 @@ public class StockOperation {
     @Enumerated(EnumType.STRING)
     @Column(name = "operation_type", nullable = false)
     private StockOperationTypeEnum operationType;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "direction", nullable = false)
+    private StockOperationDirectionEnum direction;
 }

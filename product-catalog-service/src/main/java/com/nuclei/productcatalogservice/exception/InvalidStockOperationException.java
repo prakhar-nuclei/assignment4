@@ -7,4 +7,8 @@ public class InvalidStockOperationException extends RuntimeException {
     public InvalidStockOperationException() {
         super("Stock quantity cannot be zero");
     }
+
+    public InvalidStockOperationException(final Throwable cause) {
+        super("Invalid stock operation", cause);
+    }
 }

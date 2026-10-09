@@ -8,4 +8,5 @@ public class InsufficientStockException extends RuntimeException {
         super("Insufficient stock for product id: " + productId
                 + " for quantity: " + requestedQuantity);
     }
+
 }
