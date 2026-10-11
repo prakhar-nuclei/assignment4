@@ -18,11 +18,20 @@ spring:
       reflection:
         enabled: true
 
+    client:
+      channel:
+        user-service:
+          target: ${USER_SERVICE_GRPC_URL:static://${USER_SERVICE_GRPC_HOST:localhost}:${USER_SERVICE_GRPC_PORT:6565}}
 
-  client:
-    channel:
-      user-service:
-        target: ${USER_SERVICE_GRPC_URL:static://${USER_SERVICE_GRPC_HOST:localhost}:${USER_SERVICE_GRPC_PORT:6565}}
+        product-catalog-service:
+          target: ${PRODUCT_CATALOG_SERVICE_GRPC_URL:static://${PRODUCT_CATALOG_SERVICE_GRPC_HOST:localhost}:${PRODUCT_CATALOG_SERVICE_GRPC_PORT:6566}}
 
-      product-catalog-service:
-        target: ${PRODUCT_CATALOG_SERVICE_GRPC_URL:static://${PRODUCT_CATALOG_SERVICE_GRPC_HOST:localhost}:${PRODUCT_CATALOG_SERVICE_GRPC_PORT:6566}}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: ${REDIS_TIMEOUT:2s}
+
+order:
+  idempotency-cache:
+    ttl: ${ORDER_IDEMPOTENCY_CACHE_TTL:5m}

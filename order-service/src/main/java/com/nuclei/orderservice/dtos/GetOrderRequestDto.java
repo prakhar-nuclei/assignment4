@@ -1,4 +1,4 @@
 package com.nuclei.orderservice.dtos;
 
-public record GetOrderRequestDto(Long orderId) {
+public record GetOrderRequestDto(Long orderId,Long userId) {
 }

@@ -3,22 +3,24 @@ package com.nuclei.orderservice.service.impl;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import com.nuclei.orderservice.cache.OrderIdempotencyCache;
 import com.nuclei.orderservice.dtos.*;
 import com.nuclei.orderservice.entity.Order;
 import com.nuclei.orderservice.entity.OrderItem;
 import com.nuclei.orderservice.enums.OrderStatusEnum;
 import com.nuclei.orderservice.exception.*;
 import com.nuclei.orderservice.grpc.client.ProductGrpcClient;
-import com.nuclei.orderservice.grpc.client.UserGrpcClient;
 import com.nuclei.orderservice.mapper.OrderMapper;
 import com.nuclei.orderservice.repo.OrderRepository;
 import com.nuclei.orderservice.validator.CreateOrderRequestValidator;
 import com.nuclei.orderservice.validator.GetOrderRequestValidator;
+import com.nuclei.product.proto.StockOperationDirection;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.UUID;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -38,9 +40,6 @@ class OrderServiceImplTest {
     private OrderMapper orderMapper;
 
     @Mock
-    private UserGrpcClient userGrpcClient;
-
-    @Mock
     private ProductGrpcClient productGrpcClient;
 
     @Mock
@@ -49,9 +48,57 @@ class OrderServiceImplTest {
     @Mock
     private GetOrderRequestValidator getOrderRequestValidator;
 
+    @Mock
+    private OrderIdempotencyCache orderIdempotencyCache;
+
     @InjectMocks
     private OrderServiceImpl orderService;
 
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(
+                orderIdempotencyCache.get(anyLong(), anyString())
+        ).thenReturn(Optional.empty());
+
+        lenient().when(
+                orderMapper.toOrder(
+                        anyLong(),
+                        anyString(),
+                        any(BigDecimal.class))
+        ).thenAnswer(invocation -> {
+            final Order order = new Order();
+
+            order.setUserId(invocation.getArgument(0));
+            order.setIdempotencyKey(invocation.getArgument(1));
+            order.setTotalAmount(invocation.getArgument(2));
+            order.setOrderStatusEnum(OrderStatusEnum.CONFIRMED);
+
+            return order;
+        });
+
+        lenient().when(
+                orderMapper.toOrderItem(
+                        any(ProductResponseDto.class),
+                        any(OrderItemRequestDto.class),
+                        any(BigDecimal.class),
+                        any(BigDecimal.class))
+        ).thenAnswer(invocation -> {
+            final ProductResponseDto product = invocation.getArgument(0);
+            final OrderItemRequestDto item = invocation.getArgument(1);
+            final BigDecimal unitPrice = invocation.getArgument(2);
+            final BigDecimal subtotal = invocation.getArgument(3);
+
+            final OrderItem orderItem = new OrderItem();
+            orderItem.setProductId(product.productId());
+            orderItem.setProductName(product.name());
+            orderItem.setUnitPrice(unitPrice);
+            orderItem.setQuantity(item.quantity());
+            orderItem.setSubtotal(subtotal);
+
+            return orderItem;
+        });
+    }
 
     @Test
     void createOrderShouldReturnExistingOrderForSameIdempotencyKey() {
@@ -61,7 +108,12 @@ class OrderServiceImplTest {
         final CreateOrderRequestDto request =
                 new CreateOrderRequestDto(
                         idempotencyKey,
-                        java.util.List.of()
+                        java.util.List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        )
                 );
 
         final Order existingOrder = new Order();
@@ -84,7 +136,7 @@ class OrderServiceImplTest {
                 .thenReturn(expectedResponse);
 
         final OrderResponseDto actualResponse =
-                orderService.createOrder(userId, request);
+                orderService.createOrder(request);
 
         assertSame(expectedResponse, actualResponse);
 
@@ -97,30 +149,32 @@ class OrderServiceImplTest {
 
         verify(orderMapper).toResponseDto(existingOrder);
 
-        verify(userGrpcClient, never()).getUser(userId);
-
         verify(productGrpcClient, never()).getProduct(anyLong());
 
         verify(productGrpcClient, never())
                 .updateStock(anyLong(), anyInt(), anyString());
+
+        verify(orderIdempotencyCache).put(
+                userId,
+                idempotencyKey,
+                expectedResponse
+        );
     }
 
     @Test
-    void createOrderShouldVerifyUserWhenOrderDoesNotExist() {
+    void createOrderShouldPersistOrderWhenOrderDoesNotExist() {
         final Long userId = 1L;
         final String idempotencyKey = "order-123";
 
         final CreateOrderRequestDto request =
                 new CreateOrderRequestDto(
                         idempotencyKey,
-                        java.util.List.of()
-                );
-
-        final UserResponseDto userResponse =
-                new UserResponseDto(
-                        userId,
-                        "Prakhar",
-                        "prakhar@example.com"
+                        java.util.List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        )
                 );
 
         final Order order = new Order();
@@ -139,9 +193,6 @@ class OrderServiceImplTest {
                 idempotencyKey
         )).thenReturn(Optional.empty());
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(userResponse);
-
         when(orderRepository.save(any(Order.class)))
                 .thenReturn(order);
 
@@ -149,7 +200,7 @@ class OrderServiceImplTest {
                 .thenReturn(expectedResponse);
 
         final OrderResponseDto actualResponse =
-                orderService.createOrder(userId, request);
+                orderService.createOrder(request);
 
         assertSame(expectedResponse, actualResponse);
 
@@ -160,13 +211,59 @@ class OrderServiceImplTest {
                 idempotencyKey
         );
 
-        verify(userGrpcClient).getUser(userId);
-
         verify(orderRepository).save(any(Order.class));
 
         verify(orderMapper).toResponseDto(order);
 
         verifyNoInteractions(productGrpcClient);
+    }
+
+    @Test
+    void createOrderShouldReturnCachedResponseWithoutDatabaseLookup() {
+        final Long userId = 1L;
+        final String idempotencyKey = "order-123";
+
+        final CreateOrderRequestDto request =
+                new CreateOrderRequestDto(
+                        idempotencyKey,
+                        java.util.List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        )
+                );
+
+        final OrderResponseDto cachedResponse =
+                new OrderResponseDto(
+                        10L,
+                        userId,
+                        java.util.List.of(),
+                        new BigDecimal("200.00"),
+                        OrderStatusEnum.CONFIRMED
+                );
+
+        when(orderIdempotencyCache.get(userId, idempotencyKey))
+                .thenReturn(Optional.of(cachedResponse));
+
+        final OrderResponseDto actualResponse =
+                orderService.createOrder(request);
+
+        assertSame(cachedResponse, actualResponse);
+
+        verify(createOrderRequestValidator).validate(request);
+
+        verify(orderIdempotencyCache).get(userId, idempotencyKey);
+
+        verify(orderRepository, never())
+                .findByUserIdAndIdempotencyKey(anyLong(), anyString());
+
+        verify(orderRepository, never()).save(any(Order.class));
+
+        verifyNoInteractions(productGrpcClient);
+
+        verify(orderIdempotencyCache, never())
+                .put(anyLong(), anyString(), any(OrderResponseDto.class));
     }
 
     @Test
@@ -181,14 +278,12 @@ class OrderServiceImplTest {
                         idempotencyKey,
                         java.util.List.of(
                                 new OrderItemRequestDto(productId, quantity)
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
-                );
-
-        final UserResponseDto userResponse =
-                new UserResponseDto(
-                        userId,
-                        "Prakhar",
-                        "prakhar@example.com"
                 );
 
         final ProductResponseDto productResponse =
@@ -215,9 +310,6 @@ class OrderServiceImplTest {
                 idempotencyKey
         )).thenReturn(Optional.empty());
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(userResponse);
-
         when(productGrpcClient.getProduct(productId))
                 .thenReturn(productResponse);
 
@@ -234,13 +326,11 @@ class OrderServiceImplTest {
                 .thenReturn(expectedResponse);
 
         final OrderResponseDto actualResponse =
-                orderService.createOrder(userId, request);
+                orderService.createOrder(request);
 
         assertSame(expectedResponse, actualResponse);
 
         verify(createOrderRequestValidator).validate(request);
-
-        verify(userGrpcClient).getUser(userId);
 
         verify(productGrpcClient).getProduct(productId);
 
@@ -253,6 +343,12 @@ class OrderServiceImplTest {
         verify(orderRepository).save(any(Order.class));
 
         verify(orderMapper).toResponseDto(savedOrder);
+
+        verify(orderIdempotencyCache).put(
+                userId,
+                idempotencyKey,
+                expectedResponse
+        );
     }
 
     @Test
@@ -267,6 +363,11 @@ class OrderServiceImplTest {
                         idempotencyKey,
                         java.util.List.of(
                                 new OrderItemRequestDto(productId, quantity)
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
                 );
 
@@ -278,26 +379,15 @@ class OrderServiceImplTest {
                 idempotencyKey
         )).thenReturn(Optional.empty());
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
-
         when(productGrpcClient.getProduct(productId))
                 .thenThrow(exception);
 
         assertThrows(
                 ProductNotFoundException.class,
-                () -> orderService.createOrder(userId, request)
+                () -> orderService.createOrder(request)
         );
 
         verify(createOrderRequestValidator).validate(request);
-
-        verify(userGrpcClient).getUser(userId);
 
         verify(productGrpcClient).getProduct(productId);
 
@@ -323,6 +413,11 @@ class OrderServiceImplTest {
                         idempotencyKey,
                         java.util.List.of(
                                 new OrderItemRequestDto(productId, quantity)
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
                 );
 
@@ -342,15 +437,6 @@ class OrderServiceImplTest {
                 idempotencyKey
         )).thenReturn(Optional.empty());
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
-
         when(productGrpcClient.getProduct(productId))
                 .thenReturn(productResponse);
 
@@ -362,12 +448,10 @@ class OrderServiceImplTest {
 
         assertThrows(
                 InsufficientStockException.class,
-                () -> orderService.createOrder(userId, request)
+                () -> orderService.createOrder(request)
         );
 
         verify(createOrderRequestValidator).validate(request);
-
-        verify(userGrpcClient).getUser(userId);
 
         verify(productGrpcClient).getProduct(productId);
 
@@ -378,7 +462,12 @@ class OrderServiceImplTest {
         );
 
         verify(productGrpcClient, never())
-                .compensateStock(anyLong(), anyInt(), anyString());
+                .compensateStock(
+                        anyLong(),
+                        anyInt(),
+                        anyString(),
+                        any(StockOperationDirection.class)
+                );
 
         verify(orderRepository, never())
                 .save(any(Order.class));
@@ -410,6 +499,11 @@ class OrderServiceImplTest {
                                         secondProductId,
                                         secondQuantity
                                 )
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
                 );
 
@@ -437,15 +531,6 @@ class OrderServiceImplTest {
                 idempotencyKey
         )).thenReturn(Optional.empty());
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
-
         when(productGrpcClient.getProduct(firstProductId))
                 .thenReturn(firstProduct);
 
@@ -466,12 +551,10 @@ class OrderServiceImplTest {
 
         assertThrows(
                 ProductConcurrencyException.class,
-                () -> orderService.createOrder(userId, request)
+                () -> orderService.createOrder(request)
         );
 
         verify(createOrderRequestValidator).validate(request);
-
-        verify(userGrpcClient).getUser(userId);
 
         verify(productGrpcClient).getProduct(firstProductId);
         verify(productGrpcClient).getProduct(secondProductId);
@@ -490,14 +573,16 @@ class OrderServiceImplTest {
 
         verify(productGrpcClient).compensateStock(
                 eq(firstProductId),
-                eq(-firstQuantity),
-                anyString()
+                eq(firstQuantity),
+                anyString(),
+                eq(StockOperationDirection.INCREASE)
         );
 
         verify(productGrpcClient, never()).compensateStock(
                 eq(secondProductId),
                 anyInt(),
-                anyString()
+                anyString(),
+                any(StockOperationDirection.class)
         );
 
         verify(orderRepository, never()).save(any(Order.class));
@@ -520,6 +605,11 @@ class OrderServiceImplTest {
                                         productId,
                                         quantity
                                 )
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
                 );
 
@@ -540,15 +630,6 @@ class OrderServiceImplTest {
                 userId,
                 idempotencyKey
         )).thenReturn(Optional.empty());
-
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
 
         when(productGrpcClient.getProduct(productId))
                 .thenReturn(productResponse);
@@ -572,12 +653,10 @@ class OrderServiceImplTest {
 
         assertThrows(
                 DataIntegrityViolationException.class,
-                () -> orderService.createOrder(userId, request)
+                () -> orderService.createOrder(request)
         );
 
         verify(createOrderRequestValidator).validate(request);
-
-        verify(userGrpcClient).getUser(userId);
 
         verify(productGrpcClient).getProduct(productId);
 
@@ -589,8 +668,9 @@ class OrderServiceImplTest {
 
         verify(productGrpcClient).compensateStock(
                 eq(productId),
-                eq(-quantity),
-                anyString()
+                eq(quantity),
+                anyString(),
+                eq(StockOperationDirection.INCREASE)
         );
 
         verify(orderRepository).save(any(Order.class));
@@ -606,7 +686,12 @@ class OrderServiceImplTest {
         final CreateOrderRequestDto request =
                 new CreateOrderRequestDto(
                         idempotencyKey,
-                        java.util.List.of()
+                        java.util.List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        )
                 );
 
         final Order concurrentOrder = new Order();
@@ -633,15 +718,6 @@ class OrderServiceImplTest {
                 Optional.of(concurrentOrder)
         );
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
-
         when(orderRepository.save(any(Order.class)))
                 .thenThrow(exception);
 
@@ -649,13 +725,11 @@ class OrderServiceImplTest {
                 .thenReturn(expectedResponse);
 
         final OrderResponseDto actualResponse =
-                orderService.createOrder(userId, request);
+                orderService.createOrder(request);
 
         assertSame(expectedResponse, actualResponse);
 
         verify(createOrderRequestValidator).validate(request);
-
-        verify(userGrpcClient).getUser(userId);
 
         verify(orderRepository, times(2))
                 .findByUserIdAndIdempotencyKey(
@@ -684,6 +758,11 @@ class OrderServiceImplTest {
                         java.util.List.of(
                                 new OrderItemRequestDto(firstProductId, 2),
                                 new OrderItemRequestDto(secondProductId, 3)
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
                 );
 
@@ -719,15 +798,6 @@ class OrderServiceImplTest {
                 idempotencyKey
         )).thenReturn(Optional.empty());
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
-
         when(productGrpcClient.getProduct(firstProductId))
                 .thenReturn(firstProduct);
 
@@ -753,7 +823,7 @@ class OrderServiceImplTest {
                 .thenReturn(expectedResponse);
 
         final OrderResponseDto actualResponse =
-                orderService.createOrder(userId, request);
+                orderService.createOrder(request);
 
         assertSame(expectedResponse, actualResponse);
 
@@ -829,7 +899,7 @@ class OrderServiceImplTest {
         final Long orderId = 10L;
 
         final GetOrderRequestDto request =
-                new GetOrderRequestDto(orderId);
+                new GetOrderRequestDto(orderId, userId);
 
         final Order order = new Order();
 
@@ -871,7 +941,7 @@ class OrderServiceImplTest {
         final Long orderId = 10L;
 
         final GetOrderRequestDto request =
-                new GetOrderRequestDto(orderId);
+                new GetOrderRequestDto(orderId, userId);
 
         when(orderRepository.findByIdAndUserId(
                 orderId,
@@ -901,7 +971,12 @@ class OrderServiceImplTest {
         final CreateOrderRequestDto request =
                 new CreateOrderRequestDto(
                         "",
-                        java.util.List.of()
+                        java.util.List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        )
                 );
 
         final InvalidOrderRequestException exception =
@@ -915,13 +990,12 @@ class OrderServiceImplTest {
 
         assertThrows(
                 InvalidOrderRequestException.class,
-                () -> orderService.createOrder(userId, request)
+                () -> orderService.createOrder(request)
         );
 
         verify(createOrderRequestValidator).validate(request);
 
         verifyNoInteractions(orderRepository);
-        verifyNoInteractions(userGrpcClient);
         verifyNoInteractions(productGrpcClient);
         verifyNoInteractions(orderMapper);
     }
@@ -931,7 +1005,7 @@ class OrderServiceImplTest {
         final Long userId = 1L;
 
         final GetOrderRequestDto request =
-                new GetOrderRequestDto(0L);
+                new GetOrderRequestDto(0L,userId);
 
         final InvalidOrderRequestException exception =
                 new InvalidOrderRequestException(
@@ -968,6 +1042,11 @@ class OrderServiceImplTest {
                                         productId,
                                         quantity
                                 )
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
                 );
 
@@ -997,15 +1076,6 @@ class OrderServiceImplTest {
                 Optional.empty()
         );
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
-
         when(productGrpcClient.getProduct(productId))
                 .thenReturn(productResponse);
 
@@ -1020,14 +1090,15 @@ class OrderServiceImplTest {
 
         when(productGrpcClient.compensateStock(
                 eq(productId),
-                eq(-quantity),
-                anyString()
+                eq(quantity),
+                anyString(),
+                eq(StockOperationDirection.INCREASE)
         )).thenThrow(compensationException);
 
         final DataIntegrityViolationException thrownException =
                 assertThrows(
                         DataIntegrityViolationException.class,
-                        () -> orderService.createOrder(userId, request)
+                        () -> orderService.createOrder(request)
                 );
 
         assertSame(originalException, thrownException);
@@ -1044,8 +1115,9 @@ class OrderServiceImplTest {
 
         verify(productGrpcClient).compensateStock(
                 eq(productId),
-                eq(-quantity),
-                anyString()
+                eq(quantity),
+                anyString(),
+                eq(StockOperationDirection.INCREASE)
         );
 
         verify(orderRepository).save(any(Order.class));
@@ -1063,6 +1135,11 @@ class OrderServiceImplTest {
                         idempotencyKey,
                         java.util.List.of(
                                 new OrderItemRequestDto(productId, quantity)
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
                 );
 
@@ -1090,15 +1167,6 @@ class OrderServiceImplTest {
                 idempotencyKey
         )).thenReturn(Optional.empty());
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
-
         when(productGrpcClient.getProduct(productId))
                 .thenReturn(productResponse);
 
@@ -1114,7 +1182,7 @@ class OrderServiceImplTest {
         when(orderMapper.toResponseDto(savedOrder))
                 .thenReturn(expectedResponse);
 
-        orderService.createOrder(userId, request);
+        orderService.createOrder(request);
 
         final ArgumentCaptor<String> operationIdCaptor =
                 ArgumentCaptor.forClass(String.class);
@@ -1149,6 +1217,11 @@ class OrderServiceImplTest {
                         idempotencyKey,
                         java.util.List.of(
                                 new OrderItemRequestDto(productId, quantity)
+                        ),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
                         )
                 );
 
@@ -1173,15 +1246,6 @@ class OrderServiceImplTest {
                 Optional.empty()
         );
 
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"
-                        )
-                );
-
         when(productGrpcClient.getProduct(productId))
                 .thenReturn(productResponse);
 
@@ -1199,13 +1263,14 @@ class OrderServiceImplTest {
 
         assertThrows(
                 DataIntegrityViolationException.class,
-                () -> orderService.createOrder(userId, request)
+                () -> orderService.createOrder(request)
         );
 
         verify(productGrpcClient).compensateStock(
                 eq(productId),
-                eq(-quantity),
-                compensationIdCaptor.capture()
+                eq(quantity),
+                compensationIdCaptor.capture(),
+                eq(StockOperationDirection.INCREASE)
         );
 
         final String operationId =

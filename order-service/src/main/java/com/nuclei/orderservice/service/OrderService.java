@@ -6,7 +6,7 @@ import com.nuclei.orderservice.dtos.OrderResponseDto;
 
 public interface OrderService {
 
-    OrderResponseDto createOrder(Long userId,CreateOrderRequestDto request);
+    OrderResponseDto createOrder(CreateOrderRequestDto request);
 
     OrderResponseDto getOrder(Long userId,GetOrderRequestDto request);
 }

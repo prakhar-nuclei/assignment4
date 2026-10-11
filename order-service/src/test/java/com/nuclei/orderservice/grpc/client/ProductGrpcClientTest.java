@@ -2,7 +2,9 @@ package com.nuclei.orderservice.grpc.client;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.when;
 import com.nuclei.orderservice.dtos.ProductResponseDto;
 import com.nuclei.orderservice.exception.InsufficientStockException;
 import com.nuclei.orderservice.exception.ProductConcurrencyException;
@@ -10,6 +12,7 @@ import com.nuclei.orderservice.exception.ProductNotFoundException;
 import com.nuclei.orderservice.mapper.ProductGrpcMapper;
 import com.nuclei.product.proto.*;
 import java.math.BigDecimal;
+import java.util.concurrent.TimeUnit;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,9 +35,15 @@ class ProductGrpcClientTest {
 
     @BeforeEach
     void setUp() {
+        when(productServiceBlockingStub.withDeadlineAfter(
+                anyLong(),
+                any(TimeUnit.class)
+        )).thenReturn(productServiceBlockingStub);
+
         productGrpcClient = new ProductGrpcClient(
                 productServiceBlockingStub,
-                productGrpcMapper);
+                productGrpcMapper
+        );
     }
 
     @Test
@@ -136,6 +145,7 @@ class ProductGrpcClientTest {
                         .setProductId(productId)
                         .setQuantity(quantity)
                         .setOperationId(operationId)
+                        .setDirection(StockOperationDirection.DECREASE)
                         .build();
 
         final ProductResponse grpcResponse =
@@ -179,6 +189,9 @@ class ProductGrpcClientTest {
         assertEquals(productId, actualRequest.getProductId());
         assertEquals(quantity, actualRequest.getQuantity());
         assertEquals(operationId, actualRequest.getOperationId());
+        assertEquals(
+                StockOperationDirection.DECREASE,
+                actualRequest.getDirection());
 
         verify(productGrpcMapper)
                 .toProductResponseDto(grpcResponse);
@@ -301,7 +314,7 @@ class ProductGrpcClientTest {
     @Test
     void compensateStockShouldThrowProductNotFoundExceptionWhenProductDoesNotExist() {
         final Long productId = 10L;
-        final Integer quantity = -2;
+        final Integer quantity = 2;
         final String compensationId = "compensation-123";
 
         final StatusRuntimeException grpcException =
@@ -318,7 +331,8 @@ class ProductGrpcClientTest {
                 () -> productGrpcClient.compensateStock(
                         productId,
                         quantity,
-                        compensationId));
+                        compensationId,
+                        StockOperationDirection.INCREASE));
 
         verify(productServiceBlockingStub)
                 .compensateStock(any(CompensateStockRequest.class));
@@ -329,7 +343,7 @@ class ProductGrpcClientTest {
     @Test
     void compensateStockShouldThrowInsufficientStockExceptionWhenStockIsInsufficient() {
         final Long productId = 10L;
-        final Integer quantity = -2;
+        final Integer quantity = 2;
         final String compensationId = "compensation-123";
 
         final StatusRuntimeException grpcException =
@@ -346,7 +360,8 @@ class ProductGrpcClientTest {
                 () -> productGrpcClient.compensateStock(
                         productId,
                         quantity,
-                        compensationId));
+                        compensationId,
+                        StockOperationDirection.INCREASE));
 
         verify(productServiceBlockingStub)
                 .compensateStock(any(CompensateStockRequest.class));
@@ -357,7 +372,7 @@ class ProductGrpcClientTest {
     @Test
     void compensateStockShouldThrowProductConcurrencyExceptionWhenConcurrencyOccurs() {
         final Long productId = 10L;
-        final Integer quantity = -2;
+        final Integer quantity = 2;
         final String compensationId = "compensation-123";
 
         final StatusRuntimeException grpcException =
@@ -374,7 +389,8 @@ class ProductGrpcClientTest {
                 () -> productGrpcClient.compensateStock(
                         productId,
                         quantity,
-                        compensationId));
+                        compensationId,
+                        StockOperationDirection.INCREASE));
 
         verify(productServiceBlockingStub)
                 .compensateStock(any(CompensateStockRequest.class));
@@ -385,7 +401,7 @@ class ProductGrpcClientTest {
     @Test
     void compensateStockShouldPropagateGrpcExceptionWhenStatusIsNotMapped() {
         final Long productId = 10L;
-        final Integer quantity = -2;
+        final Integer quantity = 2;
         final String compensationId = "compensation-123";
 
         final StatusRuntimeException grpcException =
@@ -402,7 +418,8 @@ class ProductGrpcClientTest {
                 () -> productGrpcClient.compensateStock(
                         productId,
                         quantity,
-                        compensationId));
+                        compensationId,
+                        StockOperationDirection.INCREASE));
 
         assertSame(grpcException, exception);
 

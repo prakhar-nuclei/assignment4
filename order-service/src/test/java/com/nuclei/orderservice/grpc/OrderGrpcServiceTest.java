@@ -1,29 +1,38 @@
 package com.nuclei.orderservice.grpc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import com.nuclei.order.proto.CreateOrderRequest;
 import com.nuclei.order.proto.GetOrderRequest;
 import com.nuclei.order.proto.OrderResponse;
 import com.nuclei.orderservice.dtos.CreateOrderRequestDto;
 import com.nuclei.orderservice.dtos.GetOrderRequestDto;
 import com.nuclei.orderservice.dtos.OrderResponseDto;
+import com.nuclei.orderservice.dtos.UserDetailsDto;
 import com.nuclei.orderservice.enums.OrderStatusEnum;
-import com.nuclei.orderservice.exception.*;
-import com.nuclei.orderservice.grpc.interceptor.AuthenticatedUserInterceptor;
-import com.nuclei.orderservice.grpc.mapper.OrderGrpcMapper;
+import com.nuclei.orderservice.exception.InsufficientStockException;
+import com.nuclei.orderservice.exception.InvalidOrderRequestException;
+import com.nuclei.orderservice.exception.OrderNotFoundException;
+import com.nuclei.orderservice.exception.ProductConcurrencyException;
+import com.nuclei.orderservice.exception.ProductNotFoundException;
+import com.nuclei.orderservice.exception.UserNotFoundException;
+import com.nuclei.orderservice.grpc.exception.OrderGrpcExceptionMapper;
 import com.nuclei.orderservice.grpc.server.OrderGrpcService;
+import com.nuclei.orderservice.mapper.OrderGrpcMapper;
 import com.nuclei.orderservice.service.OrderService;
 import java.math.BigDecimal;
 import java.util.List;
-import io.grpc.*;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import io.grpc.stub.StreamObserver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,9 +51,14 @@ public class OrderGrpcServiceTest {
 
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
-        orderGrpcService =
-                new OrderGrpcService(orderService, orderGrpcMapper);
+        final OrderGrpcExceptionMapper exceptionMapper =
+                new OrderGrpcExceptionMapper();
+
+        orderGrpcService = new OrderGrpcService(
+                orderService,
+                orderGrpcMapper,
+                exceptionMapper
+        );
     }
 
     @Test
@@ -59,7 +73,12 @@ public class OrderGrpcServiceTest {
         final CreateOrderRequestDto requestDto =
                 new CreateOrderRequestDto(
                         "order-123",
-                        List.of()
+                        List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        )
                 );
 
         final OrderResponseDto responseDto =
@@ -80,29 +99,17 @@ public class OrderGrpcServiceTest {
         when(orderGrpcMapper.toCreateOrderRequestDto(request))
                 .thenReturn(requestDto);
 
-        when(orderService.createOrder(userId, requestDto))
+        when(orderService.createOrder(requestDto))
                 .thenReturn(responseDto);
 
         when(orderGrpcMapper.toOrderResponse(responseDto))
                 .thenReturn(grpcResponse);
 
-        final Context context =
-                Context.current().withValue(
-                        AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                        userId
-                );
-
-        context.run(() ->
-                orderGrpcService.createOrder(
-                        request,
-                        responseObserver
-                )
-        );
+        orderGrpcService.createOrder(request, responseObserver);
 
         verify(orderGrpcMapper).toCreateOrderRequestDto(request);
 
         verify(orderService).createOrder(
-                userId,
                 requestDto
         );
 
@@ -125,7 +132,12 @@ public class OrderGrpcServiceTest {
         final CreateOrderRequestDto requestDto =
                 new CreateOrderRequestDto(
                         "order-123",
-                        List.of()
+                        List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        )
                 );
 
         final InvalidOrderRequestException exception =
@@ -136,21 +148,10 @@ public class OrderGrpcServiceTest {
         when(orderGrpcMapper.toCreateOrderRequestDto(request))
                 .thenReturn(requestDto);
 
-        when(orderService.createOrder(userId, requestDto))
+        when(orderService.createOrder(requestDto))
                 .thenThrow(exception);
 
-        final Context context =
-                Context.current().withValue(
-                        AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                        userId
-                );
-
-        context.run(() ->
-                orderGrpcService.createOrder(
-                        request,
-                        responseObserver
-                )
-        );
+        orderGrpcService.createOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -173,7 +174,6 @@ public class OrderGrpcServiceTest {
         verify(orderGrpcMapper).toCreateOrderRequestDto(request);
 
         verify(orderService).createOrder(
-                userId,
                 requestDto
         );
     }
@@ -190,7 +190,12 @@ public class OrderGrpcServiceTest {
         final CreateOrderRequestDto requestDto =
                 new CreateOrderRequestDto(
                         "order-123",
-                        List.of()
+                        List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        )
                 );
 
         final ProductNotFoundException exception =
@@ -199,21 +204,10 @@ public class OrderGrpcServiceTest {
         when(orderGrpcMapper.toCreateOrderRequestDto(request))
                 .thenReturn(requestDto);
 
-        when(orderService.createOrder(userId, requestDto))
+        when(orderService.createOrder(requestDto))
                 .thenThrow(exception);
 
-        final Context context =
-                Context.current().withValue(
-                        AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                        userId
-                );
-
-        context.run(() ->
-                orderGrpcService.createOrder(
-                        request,
-                        responseObserver
-                )
-        );
+        orderGrpcService.createOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -231,7 +225,6 @@ public class OrderGrpcServiceTest {
         verify(orderGrpcMapper).toCreateOrderRequestDto(request);
 
         verify(orderService).createOrder(
-                userId,
                 requestDto
         );
 
@@ -249,7 +242,13 @@ public class OrderGrpcServiceTest {
                         .build();
 
         final CreateOrderRequestDto requestDto =
-                new CreateOrderRequestDto("order-123", List.of());
+                new CreateOrderRequestDto("order-123",
+                        List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        ));
 
         final UserNotFoundException exception =
                 new UserNotFoundException(userId);
@@ -257,15 +256,10 @@ public class OrderGrpcServiceTest {
         when(orderGrpcMapper.toCreateOrderRequestDto(request))
                 .thenReturn(requestDto);
 
-        when(orderService.createOrder(userId, requestDto))
+        when(orderService.createOrder(requestDto))
                 .thenThrow(exception);
 
-        final Context context = Context.current().withValue(
-                AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                userId);
-
-        context.run(() -> orderGrpcService.createOrder(
-                request, responseObserver));
+        orderGrpcService.createOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -290,7 +284,13 @@ public class OrderGrpcServiceTest {
                         .build();
 
         final CreateOrderRequestDto requestDto =
-                new CreateOrderRequestDto("order-123", List.of());
+                new CreateOrderRequestDto("order-123",
+                        List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        ));
 
         final InsufficientStockException exception =
                 new InsufficientStockException(100L);
@@ -298,15 +298,10 @@ public class OrderGrpcServiceTest {
         when(orderGrpcMapper.toCreateOrderRequestDto(request))
                 .thenReturn(requestDto);
 
-        when(orderService.createOrder(userId, requestDto))
+        when(orderService.createOrder(requestDto))
                 .thenThrow(exception);
 
-        final Context context = Context.current().withValue(
-                AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                userId);
-
-        context.run(() -> orderGrpcService.createOrder(
-                request, responseObserver));
+        orderGrpcService.createOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -331,7 +326,12 @@ public class OrderGrpcServiceTest {
                         .build();
 
         final CreateOrderRequestDto requestDto =
-                new CreateOrderRequestDto("order-123", List.of());
+                new CreateOrderRequestDto("order-123", List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        ));
 
         final ProductConcurrencyException exception =
                 new ProductConcurrencyException(100L);
@@ -339,15 +339,10 @@ public class OrderGrpcServiceTest {
         when(orderGrpcMapper.toCreateOrderRequestDto(request))
                 .thenReturn(requestDto);
 
-        when(orderService.createOrder(userId, requestDto))
+        when(orderService.createOrder(requestDto))
                 .thenThrow(exception);
 
-        final Context context = Context.current().withValue(
-                AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                userId);
-
-        context.run(() -> orderGrpcService.createOrder(
-                request, responseObserver));
+        orderGrpcService.createOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -372,20 +367,20 @@ public class OrderGrpcServiceTest {
                         .build();
 
         final CreateOrderRequestDto requestDto =
-                new CreateOrderRequestDto("order-123", List.of());
+                new CreateOrderRequestDto("order-123", List.of(),
+                        new UserDetailsDto(
+                                userId,
+                                "Prakhar",
+                                "prakhar@example.com"
+                        ));
 
         when(orderGrpcMapper.toCreateOrderRequestDto(request))
                 .thenReturn(requestDto);
 
-        when(orderService.createOrder(userId, requestDto))
+        when(orderService.createOrder(requestDto))
                 .thenThrow(new RuntimeException("Database unavailable"));
 
-        final Context context = Context.current().withValue(
-                AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                userId);
-
-        context.run(() -> orderGrpcService.createOrder(
-                request, responseObserver));
+        orderGrpcService.createOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -415,10 +410,11 @@ public class OrderGrpcServiceTest {
         final GetOrderRequest request =
                 GetOrderRequest.newBuilder()
                         .setOrderId(orderId)
+                        .setUserId(userId)
                         .build();
 
         final GetOrderRequestDto requestDto =
-                new GetOrderRequestDto(orderId);
+                new GetOrderRequestDto(orderId, userId);
 
         final OrderResponseDto responseDto =
                 new OrderResponseDto(
@@ -445,12 +441,7 @@ public class OrderGrpcServiceTest {
         when(orderGrpcMapper.toOrderResponse(responseDto))
                 .thenReturn(grpcResponse);
 
-        final Context context = Context.current().withValue(
-                AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                userId);
-
-        context.run(() -> orderGrpcService.getOrder(
-                request, responseObserver));
+        orderGrpcService.getOrder(request, responseObserver);
 
         verify(orderGrpcMapper).toGetOrderRequestDto(request);
         verify(orderService).getOrder(userId, requestDto);
@@ -462,14 +453,17 @@ public class OrderGrpcServiceTest {
     @Test
     void getOrderShouldReturnInvalidArgumentWhenRequestIsInvalid() {
         final Long userId = 1L;
+        final Long orderId = 0L;
+
 
         final GetOrderRequest request =
                 GetOrderRequest.newBuilder()
-                        .setOrderId(0L)
+                        .setOrderId(orderId)
+                        .setUserId(userId)
                         .build();
 
         final GetOrderRequestDto requestDto =
-                new GetOrderRequestDto(0L);
+                new GetOrderRequestDto(orderId, userId);
 
         when(orderGrpcMapper.toGetOrderRequestDto(request))
                 .thenReturn(requestDto);
@@ -478,12 +472,8 @@ public class OrderGrpcServiceTest {
                 .thenThrow(new InvalidOrderRequestException(
                         "Invalid get order request"));
 
-        final Context context = Context.current().withValue(
-                AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                userId);
 
-        context.run(() -> orderGrpcService.getOrder(
-                request, responseObserver));
+        orderGrpcService.getOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -506,10 +496,11 @@ public class OrderGrpcServiceTest {
         final GetOrderRequest request =
                 GetOrderRequest.newBuilder()
                         .setOrderId(orderId)
+                        .setUserId(userId)
                         .build();
 
         final GetOrderRequestDto requestDto =
-                new GetOrderRequestDto(orderId);
+                new GetOrderRequestDto(orderId, userId);
 
         when(orderGrpcMapper.toGetOrderRequestDto(request))
                 .thenReturn(requestDto);
@@ -517,12 +508,7 @@ public class OrderGrpcServiceTest {
         when(orderService.getOrder(userId, requestDto))
                 .thenThrow(new OrderNotFoundException(orderId));
 
-        final Context context = Context.current().withValue(
-                AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                userId);
-
-        context.run(() -> orderGrpcService.getOrder(
-                request, responseObserver));
+        orderGrpcService.getOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -545,10 +531,11 @@ public class OrderGrpcServiceTest {
         final GetOrderRequest request =
                 GetOrderRequest.newBuilder()
                         .setOrderId(orderId)
+                        .setUserId(userId)
                         .build();
 
         final GetOrderRequestDto requestDto =
-                new GetOrderRequestDto(orderId);
+                new GetOrderRequestDto(orderId, userId);
 
         when(orderGrpcMapper.toGetOrderRequestDto(request))
                 .thenReturn(requestDto);
@@ -556,12 +543,7 @@ public class OrderGrpcServiceTest {
         when(orderService.getOrder(userId, requestDto))
                 .thenThrow(new RuntimeException("Database unavailable"));
 
-        final Context context = Context.current().withValue(
-                AuthenticatedUserInterceptor.USER_ID_CONTEXT_KEY,
-                userId);
-
-        context.run(() -> orderGrpcService.getOrder(
-                request, responseObserver));
+        orderGrpcService.getOrder(request, responseObserver);
 
         final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
                 ArgumentCaptor.forClass(StatusRuntimeException.class);
@@ -584,33 +566,25 @@ public class OrderGrpcServiceTest {
     }
 
     @Test
-    void createOrderShouldReturnInvalidArgumentWhenAuthenticatedUserIsMissing() {
-        final CreateOrderRequest request =
-                CreateOrderRequest.newBuilder()
-                        .setIdempotencyKey("order-123")
-                        .build();
+    void getOrderShouldReturnInvalidArgumentWhenUserIdIsInvalid() {
+        final Long orderId = 10L;
+        final Long userId = 0L;
 
-        orderGrpcService.createOrder(request, responseObserver);
-
-        final ArgumentCaptor<StatusRuntimeException> exceptionCaptor =
-                ArgumentCaptor.forClass(StatusRuntimeException.class);
-
-        verify(responseObserver).onError(exceptionCaptor.capture());
-
-        assertEquals(
-                Status.Code.INVALID_ARGUMENT,
-                exceptionCaptor.getValue().getStatus().getCode());
-
-        verifyNoInteractions(orderService);
-        verifyNoInteractions(orderGrpcMapper);
-    }
-
-    @Test
-    void getOrderShouldReturnInvalidArgumentWhenAuthenticatedUserIsMissing() {
         final GetOrderRequest request =
                 GetOrderRequest.newBuilder()
-                        .setOrderId(10L)
+                        .setOrderId(orderId)
+                        .setUserId(userId)
                         .build();
+
+        final GetOrderRequestDto requestDto =
+                new GetOrderRequestDto(orderId, userId);
+
+        when(orderGrpcMapper.toGetOrderRequestDto(request))
+                .thenReturn(requestDto);
+
+        when(orderService.getOrder(userId, requestDto))
+                .thenThrow(new InvalidOrderRequestException(
+                        "Authenticated user id must be positive."));
 
         orderGrpcService.getOrder(request, responseObserver);
 
@@ -623,7 +597,8 @@ public class OrderGrpcServiceTest {
                 Status.Code.INVALID_ARGUMENT,
                 exceptionCaptor.getValue().getStatus().getCode());
 
-        verifyNoInteractions(orderService);
-        verifyNoInteractions(orderGrpcMapper);
+        verify(orderService).getOrder(userId, requestDto);
+        verify(responseObserver, never()).onNext(any(OrderResponse.class));
+        verify(responseObserver, never()).onCompleted();
     }
 }

@@ -9,7 +9,9 @@ import com.nuclei.product.proto.CompensateStockRequest;
 import com.nuclei.product.proto.GetProductRequest;
 import com.nuclei.product.proto.ProductResponse;
 import com.nuclei.product.proto.ProductServiceGrpc;
+import com.nuclei.product.proto.StockOperationDirection;
 import com.nuclei.product.proto.UpdateStockRequest;
+import java.util.concurrent.TimeUnit;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import org.springframework.stereotype.Component;
@@ -19,6 +21,9 @@ public class ProductGrpcClient {
 
     private final ProductServiceGrpc.ProductServiceBlockingStub productServiceBlockingStub;
     private final ProductGrpcMapper productGrpcMapper;
+
+    private static final long GET_PRODUCT_DEADLINE_SECONDS = 2;
+    private static final long STOCK_MUTATION_DEADLINE_SECONDS = 3;
 
     public ProductGrpcClient(
             final ProductServiceGrpc.ProductServiceBlockingStub productServiceBlockingStub,
@@ -34,7 +39,11 @@ public class ProductGrpcClient {
 
         try {
             final ProductResponse response =
-                    productServiceBlockingStub.getProduct(request);
+                    productServiceBlockingStub
+                            .withDeadlineAfter(
+                                    GET_PRODUCT_DEADLINE_SECONDS,
+                                    TimeUnit.SECONDS)
+                            .getProduct(request);
 
             return productGrpcMapper.toProductResponseDto(response);
         } catch (final StatusRuntimeException exception) {
@@ -55,11 +64,16 @@ public class ProductGrpcClient {
                 .setProductId(productId)
                 .setQuantity(quantity)
                 .setOperationId(operationId)
+                .setDirection(StockOperationDirection.DECREASE)
                 .build();
 
         try {
             final ProductResponse response =
-                    productServiceBlockingStub.updateStock(request);
+                    productServiceBlockingStub
+                            .withDeadlineAfter(
+                                    STOCK_MUTATION_DEADLINE_SECONDS,
+                                    TimeUnit.SECONDS)
+                            .updateStock(request);
 
             return productGrpcMapper.toProductResponseDto(response);
         } catch (final StatusRuntimeException exception) {
@@ -70,17 +84,23 @@ public class ProductGrpcClient {
     public ProductResponseDto compensateStock(
             final Long productId,
             final Integer quantity,
-            final String compensationId) {
+            final String compensationId,
+            final StockOperationDirection direction) {
 
         final CompensateStockRequest request = CompensateStockRequest.newBuilder()
                 .setProductId(productId)
                 .setQuantity(quantity)
                 .setCompensationId(compensationId)
+                .setDirection(direction)
                 .build();
 
         try {
             final ProductResponse response =
-                    productServiceBlockingStub.compensateStock(request);
+                    productServiceBlockingStub
+                            .withDeadlineAfter(
+                                    STOCK_MUTATION_DEADLINE_SECONDS,
+                                    TimeUnit.SECONDS)
+                            .compensateStock(request);
 
             return productGrpcMapper.toProductResponseDto(response);
         } catch (final StatusRuntimeException exception) {

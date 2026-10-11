@@ -9,23 +9,15 @@ import com.nuclei.order.proto.GetOrderRequest;
 import com.nuclei.order.proto.OrderItemRequest;
 import com.nuclei.order.proto.OrderResponse;
 import com.nuclei.order.proto.OrderServiceGrpc;
+import com.nuclei.orderservice.cache.OrderIdempotencyCache;
 import com.nuclei.orderservice.dtos.ProductResponseDto;
-import com.nuclei.orderservice.dtos.UserResponseDto;
 import com.nuclei.orderservice.grpc.client.ProductGrpcClient;
-import com.nuclei.orderservice.grpc.client.UserGrpcClient;
-import com.nuclei.orderservice.grpc.metadata.GrpcMetadataConstants;
+import com.nuclei.orderservice.grpc.server.OrderGrpcService;
 import com.nuclei.orderservice.repo.OrderRepository;
+import com.nuclei.user.proto.UserResponse;
 import java.math.BigDecimal;
-import io.grpc.CallOptions;
-import io.grpc.Channel;
-import io.grpc.ClientCall;
-import io.grpc.ClientInterceptor;
-import io.grpc.ClientInterceptors;
-import io.grpc.ForwardingClientCall;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import io.grpc.Metadata;
-import io.grpc.MethodDescriptor;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import org.junit.jupiter.api.AfterAll;
@@ -47,8 +39,8 @@ class OrderServiceIntegrationTest {
     @Autowired
     private OrderRepository orderRepository;
 
-    @MockitoBean
-    private UserGrpcClient userGrpcClient;
+    @Autowired
+    private OrderIdempotencyCache orderIdempotencyCache;
 
     @MockitoBean
     private ProductGrpcClient productGrpcClient;
@@ -68,23 +60,32 @@ class OrderServiceIntegrationTest {
         channel.shutdownNow();
     }
 
+
     @BeforeEach
     void cleanDatabase() {
         orderRepository.deleteAll();
+
+        orderIdempotencyCache.evict(
+                1L, "integration-order-1");
+        orderIdempotencyCache.evict(
+                1L, "integration-idempotent-order");
+        orderIdempotencyCache.evict(
+                1L, "integration-get-order");
     }
+
 
     @Test
     void createOrderShouldCreateOrderThroughGrpcEndpoint() {
         final Long userId = 1L;
         final Long productId = 100L;
 
-        mockUser(userId);
         mockProduct(productId);
         mockStockUpdate(productId, 2);
 
         final OrderResponse response =
-                createAuthenticatedStub(userId)
+                OrderServiceGrpc.newBlockingStub(channel)
                         .createOrder(createOrderRequest(
+                                userId,
                                 "integration-order-1",
                                 productId,
                                 2));
@@ -108,15 +109,14 @@ class OrderServiceIntegrationTest {
         final Long productId = 100L;
         final String idempotencyKey = "integration-idempotent-order";
 
-        mockUser(userId);
         mockProduct(productId);
         mockStockUpdate(productId, 2);
 
         final OrderServiceGrpc.OrderServiceBlockingStub stub =
-                createAuthenticatedStub(userId);
+                OrderServiceGrpc.newBlockingStub(channel);
 
         final CreateOrderRequest request =
-                createOrderRequest(idempotencyKey, productId, 2);
+                createOrderRequest(userId,idempotencyKey, productId, 2);
 
         final OrderResponse firstResponse =
                 stub.createOrder(request);
@@ -138,7 +138,6 @@ class OrderServiceIntegrationTest {
 
         assertEquals(1, orderRepository.count());
 
-        verify(userGrpcClient, times(1)).getUser(userId);
         verify(productGrpcClient, times(1)).getProduct(productId);
         verify(productGrpcClient, times(1))
                 .updateStock(eq(productId), eq(2), anyString());
@@ -149,16 +148,16 @@ class OrderServiceIntegrationTest {
         final Long userId = 1L;
         final Long productId = 100L;
 
-        mockUser(userId);
         mockProduct(productId);
         mockStockUpdate(productId, 2);
 
         final OrderServiceGrpc.OrderServiceBlockingStub stub =
-                createAuthenticatedStub(userId);
+                OrderServiceGrpc.newBlockingStub(channel);
 
         final OrderResponse createdResponse =
                 stub.createOrder(
                         createOrderRequest(
+                                    userId,
                                 "integration-get-order",
                                 productId,
                                 2));
@@ -167,6 +166,7 @@ class OrderServiceIntegrationTest {
                 stub.getOrder(
                         GetOrderRequest.newBuilder()
                                 .setOrderId(createdResponse.getOrderId())
+                                .setUserId(userId)
                                 .build());
 
         assertEquals(
@@ -184,7 +184,7 @@ class OrderServiceIntegrationTest {
         final Long userId = 1L;
 
         final OrderServiceGrpc.OrderServiceBlockingStub stub =
-                createAuthenticatedStub(userId);
+                OrderServiceGrpc.newBlockingStub(channel);
 
         final StatusRuntimeException exception =
                 assertThrows(
@@ -192,6 +192,7 @@ class OrderServiceIntegrationTest {
                         () -> stub.getOrder(
                                 GetOrderRequest.newBuilder()
                                         .setOrderId(999999L)
+                                        .setUserId(userId)
                                         .build()));
 
         assertEquals(
@@ -201,10 +202,9 @@ class OrderServiceIntegrationTest {
 
     @Test
     void createOrderShouldRejectInvalidRequest() {
-        final Long userId = 1L;
 
         final OrderServiceGrpc.OrderServiceBlockingStub stub =
-                createAuthenticatedStub(userId);
+                OrderServiceGrpc.newBlockingStub(channel);
 
         final CreateOrderRequest request =
                 CreateOrderRequest.newBuilder()
@@ -228,7 +228,7 @@ class OrderServiceIntegrationTest {
         final Long userId = 1L;
 
         final OrderServiceGrpc.OrderServiceBlockingStub stub =
-                createAuthenticatedStub(userId);
+                OrderServiceGrpc.newBlockingStub(channel);
 
         final StatusRuntimeException exception =
                 assertThrows(
@@ -236,107 +236,12 @@ class OrderServiceIntegrationTest {
                         () -> stub.getOrder(
                                 GetOrderRequest.newBuilder()
                                         .setOrderId(0L)
+                                        .setUserId(userId)
                                         .build()));
 
         assertEquals(
                 Status.Code.INVALID_ARGUMENT,
                 exception.getStatus().getCode());
-    }
-
-    @Test
-    void createOrderShouldRejectMissingAuthentication() {
-        final OrderServiceGrpc.OrderServiceBlockingStub stub =
-                OrderServiceGrpc.newBlockingStub(channel);
-
-        final CreateOrderRequest request =
-                createOrderRequest(
-                        "missing-auth-order",
-                        100L,
-                        2);
-
-        final StatusRuntimeException exception =
-                assertThrows(
-                        StatusRuntimeException.class,
-                        () -> stub.createOrder(request));
-
-        assertEquals(
-                Status.Code.UNAUTHENTICATED,
-                exception.getStatus().getCode());
-
-        assertEquals(0, orderRepository.count());
-    }
-
-    @Test
-    void getOrderShouldRejectMissingAuthentication() {
-        final OrderServiceGrpc.OrderServiceBlockingStub stub =
-                OrderServiceGrpc.newBlockingStub(channel);
-
-        final StatusRuntimeException exception =
-                assertThrows(
-                        StatusRuntimeException.class,
-                        () -> stub.getOrder(
-                                GetOrderRequest.newBuilder()
-                                        .setOrderId(1L)
-                                        .build()));
-
-        assertEquals(
-                Status.Code.UNAUTHENTICATED,
-                exception.getStatus().getCode());
-    }
-
-    private OrderServiceGrpc.OrderServiceBlockingStub createAuthenticatedStub(
-            final Long userId) {
-
-        final ClientInterceptor metadataInterceptor =
-                createUserMetadataInterceptor(userId);
-
-        return OrderServiceGrpc.newBlockingStub(
-                ClientInterceptors.intercept(
-                        channel,
-                        metadataInterceptor));
-    }
-
-    private ClientInterceptor createUserMetadataInterceptor(
-            final Long userId) {
-
-        return new ClientInterceptor() {
-            @Override
-            public <ReqT, RespT> ClientCall<ReqT, RespT> interceptCall(
-                    final MethodDescriptor<ReqT, RespT> method,
-                    final CallOptions callOptions,
-                    final Channel next) {
-
-                final ClientCall<ReqT, RespT> call =
-                        next.newCall(method, callOptions);
-
-                return new ForwardingClientCall
-                        .SimpleForwardingClientCall<>(call) {
-
-                    @Override
-                    public void start(
-                            final Listener<RespT> responseListener,
-                            final Metadata headers) {
-
-                        headers.put(
-                                GrpcMetadataConstants.AUTHENTICATED_USER_ID,
-                                String.valueOf(userId));
-
-                        super.start(
-                                responseListener,
-                                headers);
-                    }
-                };
-            }
-        };
-    }
-
-    private void mockUser(final Long userId) {
-        when(userGrpcClient.getUser(userId))
-                .thenReturn(
-                        new UserResponseDto(
-                                userId,
-                                "Prakhar",
-                                "prakhar@example.com"));
     }
 
     private void mockProduct(final Long productId) {
@@ -366,12 +271,19 @@ class OrderServiceIntegrationTest {
     }
 
     private CreateOrderRequest createOrderRequest(
+            final Long userId,
             final String idempotencyKey,
             final Long productId,
             final Integer quantity) {
 
         return CreateOrderRequest.newBuilder()
                 .setIdempotencyKey(idempotencyKey)
+                .setUser(
+                        UserResponse.newBuilder()
+                                .setUserId(userId)
+                                .setName("Prakhar")
+                                .setEmail("prakhar@example.com")
+                                .build())
                 .addItems(
                         OrderItemRequest.newBuilder()
                                 .setProductId(productId)

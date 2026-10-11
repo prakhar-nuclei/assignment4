@@ -1,5 +1,6 @@
 package com.nuclei.orderservice.service.impl;
 
+import com.nuclei.orderservice.cache.OrderIdempotencyCache;
 import com.nuclei.orderservice.dtos.CreateOrderRequestDto;
 import com.nuclei.orderservice.dtos.GetOrderRequestDto;
 import com.nuclei.orderservice.dtos.OrderItemRequestDto;
@@ -7,21 +8,20 @@ import com.nuclei.orderservice.dtos.OrderResponseDto;
 import com.nuclei.orderservice.dtos.ProductResponseDto;
 import com.nuclei.orderservice.entity.Order;
 import com.nuclei.orderservice.entity.OrderItem;
-import com.nuclei.orderservice.enums.OrderStatusEnum;
 import com.nuclei.orderservice.exception.OrderNotFoundException;
 import com.nuclei.orderservice.grpc.client.ProductGrpcClient;
-import com.nuclei.orderservice.grpc.client.UserGrpcClient;
 import com.nuclei.orderservice.mapper.OrderMapper;
 import com.nuclei.orderservice.repo.OrderRepository;
 import com.nuclei.orderservice.service.OrderService;
+import com.nuclei.orderservice.util.StockOperationIdUtils;
 import com.nuclei.orderservice.validator.CreateOrderRequestValidator;
 import com.nuclei.orderservice.validator.GetOrderRequestValidator;
+import com.nuclei.product.proto.StockOperationDirection;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
+import java.util.Optional;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
@@ -31,45 +31,58 @@ public class OrderServiceImpl implements OrderService {
 
     private final OrderRepository orderRepository;
     private final OrderMapper orderMapper;
-    private final UserGrpcClient userGrpcClient;
     private final ProductGrpcClient productGrpcClient;
     private final CreateOrderRequestValidator createOrderRequestValidator;
     private final GetOrderRequestValidator getOrderRequestValidator;
+    private final OrderIdempotencyCache orderIdempotencyCache;
 
     public OrderServiceImpl(
             final OrderRepository orderRepository,
             final OrderMapper orderMapper,
-            final UserGrpcClient userGrpcClient,
             final ProductGrpcClient productGrpcClient,
             final CreateOrderRequestValidator createOrderRequestValidator,
-            final GetOrderRequestValidator getOrderRequestValidator) {
+            final GetOrderRequestValidator getOrderRequestValidator,
+            final OrderIdempotencyCache orderIdempotencyCache) {
         this.orderRepository = orderRepository;
         this.orderMapper = orderMapper;
-        this.userGrpcClient = userGrpcClient;
         this.productGrpcClient = productGrpcClient;
         this.createOrderRequestValidator = createOrderRequestValidator;
         this.getOrderRequestValidator = getOrderRequestValidator;
+        this.orderIdempotencyCache = orderIdempotencyCache;
     }
 
     @Override
     public OrderResponseDto createOrder(
-            final Long userId,
             final CreateOrderRequestDto request) {
 
         createOrderRequestValidator.validate(request);
 
-        final Order existingOrder = orderRepository
-                .findByUserIdAndIdempotencyKey(
-                        userId,
-                        request.idempotencyKey())
-                .orElse(null);
+        final Long userId = request.user().userId();
+        final String idempotencyKey = request.idempotencyKey();
 
         final OrderResponseDto response;
+        final Optional<OrderResponseDto> cachedResponse =
+                orderIdempotencyCache.get(userId, idempotencyKey);
 
-        if (existingOrder != null) {
-            response = orderMapper.toResponseDto(existingOrder);
+        if (cachedResponse.isPresent()) {
+            response = cachedResponse.get();
         } else {
-            response = createNewOrder(userId, request);
+            final Order existingOrder = orderRepository
+                    .findByUserIdAndIdempotencyKey(
+                            userId,
+                            idempotencyKey)
+                    .orElse(null);
+
+            if (existingOrder != null) {
+                response = orderMapper.toResponseDto(existingOrder);
+            } else {
+                response = createNewOrder(userId, request);
+            }
+
+            orderIdempotencyCache.put(
+                    userId,
+                    idempotencyKey,
+                    response);
         }
 
         return response;
@@ -79,8 +92,6 @@ public class OrderServiceImpl implements OrderService {
     private OrderResponseDto createNewOrder(
             final Long userId,
             final CreateOrderRequestDto request) {
-
-        userGrpcClient.getUser(userId);
 
         final List<OrderItem> orderItems = new ArrayList<>();
         final List<StockMutation> successfulStockMutations =
@@ -144,16 +155,14 @@ public class OrderServiceImpl implements OrderService {
             final ProductResponseDto product =
                     productGrpcClient.getProduct(item.productId());
 
-            final String operationId = UUID.nameUUIDFromBytes(
-                    (userId + ":" + request.idempotencyKey() + ":"
-                            + itemIndex)
-                            .getBytes(StandardCharsets.UTF_8)
-            ).toString();
+            final String operationId =
+                    StockOperationIdUtils.generateOperationId(
+                            userId,
+                            request.idempotencyKey(),
+                            itemIndex);
 
-            final String compensationId = UUID.nameUUIDFromBytes(
-                    (operationId + ":compensation")
-                            .getBytes(StandardCharsets.UTF_8)
-            ).toString();
+            final String compensationId =
+                    StockOperationIdUtils.generateCompensationId(operationId);
 
             productGrpcClient.updateStock(
                     item.productId(),
@@ -166,7 +175,8 @@ public class OrderServiceImpl implements OrderService {
                             item.productId(),
                             item.quantity(),
                             operationId,
-                            compensationId
+                            compensationId,
+                            StockOperationDirection.DECREASE
                     )
             );
 
@@ -185,14 +195,11 @@ public class OrderServiceImpl implements OrderService {
                 .multiply(BigDecimal.valueOf(item.quantity()))
                 .setScale(2, RoundingMode.HALF_UP);
 
-        final OrderItem orderItem = new OrderItem();
-        orderItem.setProductId(product.productId());
-        orderItem.setProductName(product.name());
-        orderItem.setUnitPrice(unitPrice);
-        orderItem.setQuantity(item.quantity());
-        orderItem.setSubtotal(subtotal);
-
-        return orderItem;
+        return orderMapper.toOrderItem(
+                product,
+                item,
+                unitPrice,
+                subtotal);
     }
 
     private Order buildOrder(
@@ -201,15 +208,13 @@ public class OrderServiceImpl implements OrderService {
             final List<OrderItem> orderItems,
             final BigDecimal totalAmount) {
 
-        final Order order = new Order();
-        order.setUserId(userId);
-        order.setIdempotencyKey(idempotencyKey);
-        order.setTotalAmount(totalAmount);
-        order.setOrderStatusEnum(OrderStatusEnum.CONFIRMED);
+        final Order order = orderMapper.toOrder(
+                userId,
+                idempotencyKey,
+                totalAmount);
 
-        for (final OrderItem orderItem : orderItems) {
-            orderItem.setOrder(order);
-        }
+        orderItems.stream()
+                .forEach(orderItem -> orderItem.setOrder(order));
 
         order.setItems(orderItems);
 
@@ -258,7 +263,8 @@ public class OrderServiceImpl implements OrderService {
             Long productId,
             Integer quantity,
             String operationId,
-            String compensationId) {
+            String compensationId,
+            StockOperationDirection direction) {
     }
 
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
@@ -266,16 +272,36 @@ public class OrderServiceImpl implements OrderService {
             final List<StockMutation> stockMutations,
             final Exception originalException) {
 
-        for (final StockMutation mutation : stockMutations) {
-            try {
-                productGrpcClient.compensateStock(
-                        mutation.productId(),
-                        -mutation.quantity(),
-                        mutation.compensationId()
-                );
-            } catch (final Exception compensationException) {
-                originalException.addSuppressed(compensationException);
-            }
+        stockMutations.stream()
+                .forEach(mutation -> {
+                    try {
+                        productGrpcClient.compensateStock(
+                                mutation.productId(),
+                                mutation.quantity(),
+                                mutation.compensationId(),
+                                getCompensationDirection(mutation.direction())
+                        );
+                    } catch (final Exception compensationException) {
+                        originalException.addSuppressed(compensationException);
+                    }
+                });
+    }
+
+    private StockOperationDirection getCompensationDirection(
+            final StockOperationDirection originalDirection) {
+
+       final StockOperationDirection compensationDirection;
+
+        if (originalDirection == StockOperationDirection.DECREASE) {
+            compensationDirection = StockOperationDirection.INCREASE;
+        } else if (originalDirection == StockOperationDirection.INCREASE) {
+            compensationDirection = StockOperationDirection.DECREASE;
+        } else {
+            throw new IllegalArgumentException(
+                    "Unsupported stock operation direction: " + originalDirection
+            );
         }
+
+        return compensationDirection;
     }
 }
