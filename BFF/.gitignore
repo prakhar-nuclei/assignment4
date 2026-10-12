@@ -1,0 +1,11 @@
+# Generated protobuf code
+/internal/generated/
+
+# Go build output
+/bin/
+
+# IDE
+.idea/
+
+# macOS
+.DS_Store
