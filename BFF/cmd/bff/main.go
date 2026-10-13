@@ -103,7 +103,6 @@ func main() {
 	)
 
 	router.GET("/api/products/:id", productHandler.GetProduct)
-	router.PATCH("/api/products/:id/stock", productHandler.UpdateStock)
 	router.POST("/api/orders", orderHandler.CreateOrder)
 	router.GET("/api/orders/:id", orderHandler.GetOrder)
 

@@ -29,21 +29,3 @@ func (c *ProductClient) GetProduct(
 		},
 	)
 }
-
-func (c *ProductClient) UpdateStock(
-	ctx context.Context,
-	productID int64,
-	quantity int32,
-	operationID string,
-	direction product.StockOperationDirection,
-) (*product.ProductResponse, error) {
-	return c.client.UpdateStock(
-		ctx,
-		&product.UpdateStockRequest{
-			ProductId:   productID,
-			Quantity:    quantity,
-			OperationId: operationID,
-			Direction:   direction,
-		},
-	)
-}
