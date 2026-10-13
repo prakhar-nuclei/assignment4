@@ -71,3 +71,7 @@ pmd {
     consoleOutput = true
     ignoreFailures = false
 }
+
+tasks.named('bootJar') {
+    archiveFileName = 'user-service.jar'
+}
