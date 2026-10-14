@@ -35,3 +35,6 @@ out/
 
 ### VS Code ###
 .vscode/
+
+# Kubernetes ConfigMap with environment-specific values
+DevOps/configmap.yaml
