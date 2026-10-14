@@ -46,3 +46,6 @@ src/test/resources/encryption/
 
 ### VS Code ###
 .vscode/
+
+# Kubernetes staging configuration
+DevOps/configmap.yaml

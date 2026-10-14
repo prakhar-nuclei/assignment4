@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: user-service
+          image: stagingnuclei01.azurecr.io/prakhar/user-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: grpc
+              containerPort: 6565
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: user-service-config
+          env:
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: user-service-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: user-service-secrets
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: user-service-certs
+              mountPath: /etc/user-service/certs
+              readOnly: true
+      volumes:
+        - name: user-service-certs
+          secret:
+            secretName: user-service-certs
+            defaultMode: 0440
