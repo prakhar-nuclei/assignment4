@@ -38,3 +38,6 @@ out/
 src/main/resources/keys/
 src/test/resources/keys/
 
+# Kubernetes staging configuration
+DevOps/configmap.yaml
+

@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-catalog-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-catalog-service
+  template:
+    metadata:
+      labels:
+        app: product-catalog-service
+    spec:
+      containers:
+        - name: product-catalog-service
+          image: stagingnuclei01.azurecr.io/prakhar/product-catalog-service:latest
+          imagePullPolicy: Always
+          ports:
+            - name: grpc
+              containerPort: 6566
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: product-catalog-config
+          env:
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: product-catalog-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: product-catalog-secrets
+                  key: DB_PASSWORD
