@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bff
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bff
+  template:
+    metadata:
+      labels:
+        app: bff
+    spec:
+      containers:
+        - name: bff
+          image: stagingnuclei01.azurecr.io/prakhar/bff:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: bff-config
+          env:
+            - name: IDEMPOTENCY_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bff-secrets
+                  key: IDEMPOTENCY_SECRET

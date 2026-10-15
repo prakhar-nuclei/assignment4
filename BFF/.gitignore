@@ -1,0 +1,14 @@
+# Generated protobuf code
+/internal/generated/
+
+# Go build output
+/bin/
+
+# IDE
+.idea/
+
+# macOS
+.DS_Store
+
+# Kubernetes ConfigMap with environment-specific values
+DevOps/configmap.yaml
